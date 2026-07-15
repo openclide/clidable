@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/* -----------------------------------------------------------------------------
+   Brand tokens. Light/dark are driven by `prefers-color-scheme` only — we
+   don't expose a manual toggle in v1 because the in-app pickers we tested
+   ended up confusing customers who'd already set their OS preference.
+   --------------------------------------------------------------------------- */
+:root {
+  --color-bg: #ffffff;
+  --color-fg: #0f172a;
+  --color-muted: #64748b;
+  --color-accent: #6366f1;
+  --color-danger: #ef4444;
+  --radius-card: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0b0f1a;
+    --color-fg: #e5e7eb;
+    --color-muted: #94a3b8;
+    --color-accent: #818cf8;
+  }
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+.error {
+  padding: 1rem;
+  background: color-mix(in oklch, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+  border-radius: var(--radius-card);
+}
+
+.loading {
+  padding: 1rem;
+  color: var(--color-muted);
+}

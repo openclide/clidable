@@ -1,0 +1,267 @@
+@import "tailwindcss";
+
+/* -----------------------------------------------------------------------------
+   Theme tokens — designed for dark-first glassmorphism. Both shells use the
+   same dark base (browser fills it with a gradient; Tauri leaves it transparent
+   so OS vibrancy bleeds through — see body[data-shell] rules below).
+   --------------------------------------------------------------------------- */
+@theme {
+  /* Foreground / background */
+  --color-foreground: oklch(0.97 0.005 280);
+  --color-foreground-muted: oklch(0.7 0.015 280);
+  --color-foreground-dim: oklch(0.55 0.015 280);
+  --color-background: oklch(0.13 0.015 280);
+
+  /* Glass surface tokens (used by the @utility .glass rule below) */
+  --color-glass-edge: oklch(1 0 0 / 0.1);
+  --color-glass-edge-strong: oklch(1 0 0 / 0.18);
+
+  /* Brand accents */
+  --color-accent: oklch(0.72 0.18 290);     /* purple */
+  --color-accent-2: oklch(0.72 0.16 250);   /* blue */
+
+  /* Per-agent accent colors — used for status dots, attribution stripes, tabs */
+  --color-claude: oklch(0.8 0.13 75);       /* amber */
+  --color-codex: oklch(0.72 0.16 160);      /* emerald */
+  --color-antigravity: oklch(0.68 0.17 255); /* blue */
+  --color-cursor: oklch(0.72 0.16 250);     /* blue */
+  --color-opencode: oklch(0.75 0.16 30);    /* orange */
+  --color-aider: oklch(0.78 0.13 130);      /* lime */
+}
+
+/* -----------------------------------------------------------------------------
+   Glass utility — one source of truth for "this surface is glass."
+   Layered: top highlight inset (catches the light), soft outer shadow,
+   blurred translucent fill, hairline edge.
+
+   The fill is a *dark*-tinted color rather than a light white tint so panels
+   stay readable on bright wallpapers (the OS vibrancy lets the desktop
+   bleed through, which can wash out a white-on-white tint). The body itself
+   stays transparent so the desktop is still visible in the gaps between
+   panels — only the panel boxes get the dark glass treatment.
+   --------------------------------------------------------------------------- */
+@utility glass {
+  /* Dark fill kept opaque enough that text stays legible when a bright/white
+     app shows through the OS vibrancy behind the window — 35% washed out over
+     white. ~55% is the balance between "still glass" and readable; this is the
+     knob to tune for the translucency/legibility trade-off. */
+  background: color-mix(in oklch, var(--color-background) 55%, transparent);
+  /* Stronger hairline + drop shadow so the panel's edge stays defined against a
+     white backdrop (otherwise the glass blends into a bright app behind it). */
+  border: 1px solid var(--color-glass-edge-strong);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklch, white 6%, transparent),
+    0 8px 32px -8px color-mix(in oklch, black 60%, transparent);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+/* Accessibility: when "Reduce Transparency" is on, drop the blur and make glass
+   surfaces fully opaque so legibility never depends on translucency. WKWebView
+   reports this via prefers-reduced-transparency. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--color-background);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  html[data-shell="tauri"] {
+    background: var(--color-background);
+  }
+}
+
+/* Solid (not-blurred) surface for cards nested inside a glass panel —
+   blurring twice is wasteful and looks muddy. */
+@utility surface {
+  background: color-mix(in oklch, white 3%, transparent);
+  border: 1px solid color-mix(in oklch, white 6%, transparent);
+}
+@utility surface-hover {
+  background: color-mix(in oklch, white 5%, transparent);
+  border-color: var(--color-glass-edge-strong);
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Inter", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  color: var(--color-foreground);
+  /* Kill the macOS rubber-band overscroll — without this, scrolling past
+     the content edge briefly exposes html's background as a gray strip. */
+  overscroll-behavior: none;
+}
+
+/* -----------------------------------------------------------------------------
+   Shell-aware background lives on <html> (the document root, always painted
+   for the full document height). Putting it on <body> leaves a "gray strip"
+   wherever body's box is shorter than the actual scrolling document.
+
+     - Tauri:   transparent — `macOSPrivateApi: true` makes the webview truly
+                see-through, so the OS-level NSVisualEffectView (HudWindow
+                material — intrinsically dark) bleeds through as desktop blur.
+     - Browser: tasteful dark gradient + solid base.
+
+   `body` stays transparent in both shells so it never paints over <html>.
+   --------------------------------------------------------------------------- */
+html[data-shell="tauri"] {
+  background: transparent;
+}
+
+/* Browser/PWA: solid dark base. The animated colorful mesh sits on a
+   fixed ::before pseudo so it stays put while the page scrolls. */
+html[data-shell="browser"] {
+  background: var(--color-background);
+}
+
+html[data-shell="browser"]::before {
+  content: "";
+  position: fixed;
+  /* Oversized so animation translate/scale never exposes the edges. */
+  inset: -8%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 50% 42% at 8% 12%,
+      oklch(0.5 0.2 290 / 0.55),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse 55% 45% at 92% 6%,
+      oklch(0.52 0.18 240 / 0.5),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse 42% 34% at 72% 48%,
+      oklch(0.56 0.2 330 / 0.42),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse 48% 38% at 12% 85%,
+      oklch(0.52 0.18 195 / 0.42),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse 50% 40% at 88% 95%,
+      oklch(0.55 0.2 305 / 0.5),
+      transparent 65%
+    );
+  animation: drift 32s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+body {
+  background: transparent;
+}
+
+/* Respect user's reduced-motion preference everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Selection color */
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+/* -----------------------------------------------------------------------------
+   Animations
+   --------------------------------------------------------------------------- */
+@keyframes enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-2%, 1.5%, 0) scale(1.06);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* One-shot "saved" pop for the checkpoint/rewind button — a quick scale
+   overshoot that settles back to rest. Transform-only so it never reflows
+   the composer footer. */
+@keyframes checkpoint-pop {
+  0% {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.13);
+  }
+  60% {
+    transform: scale(0.97);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Scrollbar — subtle, glass-friendly. Targets both modern + WebKit.
+   --------------------------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, white 10%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  background: transparent;
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, white 8%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklch, white 14%, transparent);
+  background-clip: padding-box;
+}
+
+/* -----------------------------------------------------------------------------
+   xterm.js — the bundled CSS sets a solid `background: #000` on every
+   surface, which overrides the JS `theme.background = rgba(0,0,0,0)` we
+   pass at construction time. Override here so the leaf's glass chrome
+   shows through.
+   --------------------------------------------------------------------------- */
+.xterm,
+.xterm-viewport,
+.xterm-screen {
+  background: transparent !important;
+  background-color: transparent !important;
+}

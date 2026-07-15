@@ -1,0 +1,93 @@
+[package]
+name = "clidable"
+version = "0.1.0"
+description = "GUI for CLI coding agents"
+authors = ["Andre Pimenta"]
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.77"
+default-run = "clidable"
+
+[lib]
+name = "clidable_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "clidable"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.11", features = ["macos-private-api"] }
+tauri-plugin-shell = "2.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# OS-level window vibrancy (real desktop blur). See PLAN.md §9.
+window-vibrancy = "0.7"
+
+# Desktop-only checkpoint screenshots (PLAN.md §2). We snapshot the
+# webview itself (WKWebView.takeSnapshot) rather than the OS screen —
+# permission-free, and it captures cross-origin iframe pixels. The
+# crop-to-preview-pane happens in JS. base64 ferries the PNG to the
+# frontend; the objc2 stack is macOS-only (see target deps below).
+base64 = "0.22.1"
+
+# macOS webview snapshot. Versions track the objc2 stack tauri/wry
+# already pull in, so cargo unifies rather than duplicating.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+  "NSData",
+  "NSString",
+  "NSDictionary",
+  "NSError",
+] }
+objc2-app-kit = { version = "0.3", features = [
+  "NSImage",
+  "NSImageRep",
+  "NSBitmapImageRep",
+] }
+objc2-web-kit = { version = "0.3", features = [
+  "WKWebView",
+  "WKSnapshotConfiguration",
+  "block2",
+] }
+block2 = "0.6"
+
+# Windows webview snapshot via WebView2's ICoreWebView2.CapturePreview
+# (writes a PNG to an IStream). webview2-com is the same crate wry already
+# pulls in, so cargo unifies; the `windows` Com features give us the
+# in-memory IStream (CreateStreamOnHGlobal) we hand to CapturePreview and
+# read back. Versions track wry's (windows 0.61) to avoid duplication.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+# Each feature is load-bearing for one symbol used in capture.rs — don't
+# trim without checking the Windows build (it won't fail a macOS cargo check):
+#   Win32_Foundation                  → HGLOBAL
+#   Win32_System_Com                  → IStream, STATSTG, STREAM_SEEK_SET, STATFLAG_NONAME
+#   Win32_System_Com_StructuredStorage → CreateStreamOnHGlobal
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+] }
+
+# Linux + the BSDs: webview snapshot via WebKitGTK's
+# webkit_web_view_get_snapshot (async, returns a cairo surface). webkit2gtk
+# is wry's own dep, so this unifies. We only add cairo-rs explicitly to
+# switch on its `png` feature — that lets us serialise the snapshot surface
+# straight to PNG bytes without dragging in gdk-pixbuf. The cfg mirrors
+# tauri's `PlatformWebview::inner()`, available on this whole GTK family.
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+webkit2gtk = "2.0"
+cairo-rs = { version = "0.18", features = ["png"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"   # optimize for size — install bundle stays slim
+panic = "abort"
+strip = true

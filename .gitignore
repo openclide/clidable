@@ -1,0 +1,25 @@
+explore/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Bun / Node runtime
+.env
+.env.local
+.env.*.local
+*.log
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor-local settings
+.vscode/
+
+# Tauri build artefacts (and src-tauri/.gitignore covers target/ + gen/)
+docs-site/

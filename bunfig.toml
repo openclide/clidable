@@ -1,0 +1,8 @@
+# Bun dev-server configuration.
+# Plugins listed here are loaded ONLY by `Bun.serve` when it bundles HTML
+# imports (dev with HMR). The `bun build` CLI does NOT read them — production
+# builds go through scripts/build.ts, which passes the same plugin to
+# Bun.build() explicitly. Keep the two in sync.
+
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
