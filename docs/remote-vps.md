@@ -9,11 +9,11 @@ Everything (projects, agents, terminals, checkpoints) lives on the **server**. Y
 > ⚠️ **Clidable has no working authentication yet, and anyone who can reach it can spawn a terminal on your server.** That is, by design, remote code execution for whoever connects.
 >
 > Concretely, in the current version:
-> - The server is **localhost-only**. It refuses to start on any non-loopback `--bind` — a LAN IP, `0.0.0.0`, even a Tailscale address — with: `refusing to start: Clidable is localhost-only — --bind … would expose unauthenticated remote code execution (PTY spawn) to the network`.
-> - `--auth` (any value other than `none`) and `--tls` are also **refused at startup** — `refusing to start: --auth / --tls are not implemented yet` — because request-time auth and TLS don't exist yet. `--token` / `CLIDABLE_TOKEN` is parsed but currently unused.
-> - A same-site gate shields `/api` and `/proxy` from *browsers*: any request whose `Host` header isn't loopback, or that the browser marks cross-site, gets a 403 `cross-site request refused` (anti drive-by-RCE / CSRF / DNS-rebinding). Non-browser clients (curl, the CLI) pass — this is **not** authentication.
+> - The server is **localhost-only by default**. It refuses to start on any non-loopback `--bind` — a LAN IP, `0.0.0.0`, even a Tailscale address — with: `refusing to start: Clidable is localhost-only by default — --bind … would expose unauthenticated remote code execution (PTY spawn) to the network`. You *can* override this with `--allow-lan` (or `CLIDABLE_ALLOW_LAN=1`) if you accept the risk on a network you control — but that binds an **unauthenticated** server directly to the network and only makes sense behind a firewall/VPN. The access layers below are the recommended path and keep the bind on loopback.
+> - `--auth` (any value other than `none`) and `--tls` are **refused at startup** — `refusing to start: --auth / --tls are not implemented yet` — because request-time auth and TLS don't exist yet. `--allow-lan` does **not** add authentication; it only lifts the bind restriction. `--token` / `CLIDABLE_TOKEN` is parsed but currently unused.
+> - A same-site gate shields `/api` and `/proxy` from *browsers* (even on an `--allow-lan` bind): any request the browser marks cross-site — or, on a loopback bind, whose `Host` header isn't loopback — gets a 403 `cross-site request refused` (anti drive-by-RCE / CSRF / DNS-rebinding). Same-origin and non-browser clients (curl, the CLI) pass — this is **not** authentication.
 >
-> **Therefore: anything that can reach port 7878 can spawn terminals.** Clidable stays on `127.0.0.1` (the default, and the only bind it will accept); put one of the access layers below in front of it. All three are battle-tested patterns; pick the one that matches your comfort level.
+> **Therefore: anything that can reach port 7878 can spawn terminals.** The safe default keeps Clidable on `127.0.0.1`; put one of the access layers below in front of it. All three are battle-tested patterns; pick the one that matches your comfort level.
 
 ## Step 1 — Install on the server
 
@@ -82,7 +82,7 @@ curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 ```
 
-Install Tailscale on your laptop/phone. Clidable itself stays on `127.0.0.1` — the server refuses to bind the Tailscale IP (or anything else non-loopback) — so you reach it *over* the tailnet rather than binding *to* it. Two ways:
+Install Tailscale on your laptop/phone. Keep Clidable on `127.0.0.1` (the default) and reach it *over* the tailnet rather than binding *to* it — that way the encryption and access control live in Tailscale, not in an unauthenticated open port. Two ways:
 
 **SSH tunnel over the tailnet** (works today, no caveats):
 
@@ -198,7 +198,7 @@ WorkingDirectory=/home/you/clidable
 
 - [ ] Bun, git, Node installed; agent CLIs installed **and logged in** as the service user
 - [ ] `clidable-server` binary built on the server (`bun run build:compile`)
-- [ ] Service bound to `127.0.0.1` (the default — the server refuses any other bind)
+- [ ] Service bound to `127.0.0.1` (the default — don't add `--allow-lan` unless you deliberately want a direct unauthenticated bind behind your own firewall)
 - [ ] Access via SSH tunnel / Tailscale / authenticated reverse proxy
 - [ ] WebSocket upgrade headers **and loopback `Host` rewrite** configured if proxying
 - [ ] systemd unit enabled

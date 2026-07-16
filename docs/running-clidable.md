@@ -104,18 +104,19 @@ Terminal sessions *do* survive browser disconnects while the server stays up —
 ## Quick reference: launch flags
 
 ```bash
-clidable-server [--port 7878] [--bind 127.0.0.1] [--dev]
+clidable-server [--port 7878] [--bind 127.0.0.1] [--allow-lan] [--dev]
 ```
 
 | Flag | Env var | Default | Meaning |
 |---|---|---|---|
 | `--port` | `CLIDABLE_PORT` | `7878` | HTTP/WS port |
-| `--bind` | `CLIDABLE_BIND` | `127.0.0.1` | Loopback address to listen on — any non-loopback value refuses to start (see warning below) |
+| `--bind` | `CLIDABLE_BIND` | `127.0.0.1` | Address to listen on — loopback by default; a non-loopback value (`0.0.0.0`, `::`, a LAN IP, a hostname) refuses to start unless you also pass `--allow-lan` (see warning below) |
+| `--allow-lan` | `CLIDABLE_ALLOW_LAN` | off | Opt in to a non-loopback `--bind`. Permits the bind and starts an **unauthenticated, network-exposed** server (loud startup warning). No auth is added — for informed use on a network you control |
 | `--token` | `CLIDABLE_TOKEN` | — | Parsed but unused — reserved for future server mode |
 | `--auth` | — | `none` | Only `none` is accepted — `token` / `oauth` refuse to start |
 | `--tls` | — | — | Refuses to start — TLS is not implemented |
 | `--dev` | `NODE_ENV` | dev unless `NODE_ENV=production` | HMR + console streaming |
 
-> ⚠️ **Clidable is localhost-only.** Any non-loopback `--bind` refuses to start (``refusing to start: Clidable is localhost-only — `--bind …` would expose unauthenticated remote code execution (PTY spawn) to the network``), and so do `--auth token|oauth` and `--tls` (`refusing to start: --auth / --tls are not implemented yet`) — request-time auth and TLS don't exist, and silently accepting the flags would be false assurance. Never expose Clidable directly to the internet — it can spawn terminals on the host. Use the patterns in [Remote & VPS Setup](./remote-vps.md) instead.
+> ⚠️ **Clidable is localhost-only by default.** A non-loopback `--bind` (`0.0.0.0`, `::`, a LAN IP, a hostname) refuses to start (``refusing to start: Clidable is localhost-only by default — `--bind …` would expose unauthenticated remote code execution (PTY spawn) to the network``) unless you explicitly opt in with **`--allow-lan`** (or `CLIDABLE_ALLOW_LAN=1`). That opt-in is the informed "I control this network" escape hatch — and it starts a server with **no authentication**, so anyone who can reach the address can spawn terminals on the host. Only do it behind a firewall/VPN you trust. `--auth token|oauth` and `--tls` still refuse to start unconditionally (`refusing to start: --auth / --tls are not implemented yet`) — request-time auth and TLS don't exist, and `--allow-lan` adds neither, so silently accepting those flags would be false assurance. Never expose Clidable directly to the internet without a tunnel or an authenticating reverse proxy — see [Remote & VPS Setup](./remote-vps.md).
 
 Full details in the [Configuration Reference](./configuration.md).

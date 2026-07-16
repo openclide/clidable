@@ -7,7 +7,8 @@ Everything tunable: flags, environment variables, file locations, and the suppor
 | Flag | Env var | Default | Description |
 |---|---|---|---|
 | `--port <n>` | `CLIDABLE_PORT` | `7878` | Port for the UI, API, and terminals (1–65535) |
-| `--bind <addr>` | `CLIDABLE_BIND` | `127.0.0.1` | Interface to listen on. **Loopback only** — `127.0.0.0/8`, `::1`, or `localhost`; anything else refuses to start (see below) |
+| `--bind <addr>` | `CLIDABLE_BIND` | `127.0.0.1` | Interface to listen on. **Loopback by default** — `127.0.0.0/8`, `::1`, or `localhost`; a non-loopback bind refuses to start unless you add `--allow-lan` (see below) |
+| `--allow-lan` | `CLIDABLE_ALLOW_LAN` | off | Opt in to a non-loopback `--bind`, exposing the **unauthenticated** server to the network. Prints a loud startup warning; adds no auth. Env value accepts `1`/`true`/`yes`/`on` (see below) |
 | `--token <secret>` | `CLIDABLE_TOKEN` | — | Shared secret, reserved for a future server mode *(parsed, currently unused)* |
 | `--auth <mode>` | — | `none` | Only `none` is accepted — `token` / `oauth` refuse to start *(not implemented yet, see below)* |
 | `--tls <cert>` | — | — | Refuses to start *(not implemented — terminate TLS in a reverse proxy)* |
@@ -17,23 +18,37 @@ Flags beat environment variables. Bun also auto-loads `.env` files from the work
 
 ### The safety guard
 
-Clidable is **localhost-only**. The server refuses to start with *any* non-loopback `--bind` — a LAN IP, `0.0.0.0`, `::`, a hostname, anything:
+Clidable is **localhost-only by default**. The server refuses to start with *any* non-loopback `--bind` — a LAN IP, `0.0.0.0`, `::`, a hostname, anything — unless you explicitly opt in:
 
 ```
-refusing to start: Clidable is localhost-only — `--bind 0.0.0.0` would
-expose unauthenticated remote code execution (PTY spawn) to the network.
-Bind a loopback address (127.0.0.1, the default); for remote access, put
-Clidable behind a VPN or authenticating reverse proxy you control.
+refusing to start: Clidable is localhost-only by default — `--bind 0.0.0.0`
+would expose unauthenticated remote code execution (PTY spawn) to the
+network. Bind a loopback address (127.0.0.1, the default) and use a tunnel
+or authenticating reverse proxy for remote access. If you control this
+network and accept the risk, re-run with `--allow-lan` (or
+CLIDABLE_ALLOW_LAN=1).
 ```
 
-It refuses `--auth token`, `--auth oauth`, and `--tls` the same way — neither is implemented yet, and silently accepting them would be false assurance:
+**The `--allow-lan` escape hatch.** If you control the network (firewall/VPN) and accept the risk, `--allow-lan` (or `CLIDABLE_ALLOW_LAN=1`) permits the non-loopback bind. It does **not** add authentication — it's an informed "I accept unauthenticated exposure on a network I control" choice. The server starts and prints a loud red banner at the top of the log:
+
+```
+ ⚠  NETWORK-EXPOSED  --allow-lan is on.
+Clidable is bound to 0.0.0.0:7878 — anyone who can reach this
+address can spawn terminals on this machine. There is NO authentication.
+Only do this on a network you control (firewall/VPN). To lock it back down,
+drop --allow-lan / CLIDABLE_ALLOW_LAN and bind 127.0.0.1 (the default).
+```
+
+Even on an `--allow-lan` public bind, the [same-site gate](#network-behavior) still runs: cross-site browser requests are refused with `403`, while same-origin requests and non-browser clients (`curl`, the `clidable` CLI) pass.
+
+`--auth token`, `--auth oauth`, and `--tls` are refused **unconditionally** — even with `--allow-lan` — because neither is implemented yet, and silently accepting them would be false assurance:
 
 ```
 refusing to start: --auth / --tls are not implemented yet — Clidable is
 localhost-only. Remove them and bind a loopback address.
 ```
 
-> ⚠️ **Honest limitation:** there is no request-time auth and no TLS — that's *why* those flags are refused rather than ignored. `--token` / `CLIDABLE_TOKEN` is still parsed (the seam for a future server mode) but **no incoming request is checked against it**. For remote access, keep the loopback bind and use an SSH tunnel, Tailscale, or an authenticating reverse proxy — full recipes in [Remote & VPS Setup](./remote-vps.md).
+> ⚠️ **Honest limitation:** there is no request-time auth and no TLS — that's *why* those flags are refused rather than ignored, and why `--allow-lan` only *permits* network exposure without securing it. `--token` / `CLIDABLE_TOKEN` is still parsed (the seam for a future server mode) but **no incoming request is checked against it**. For remote access, prefer keeping the loopback bind and using an SSH tunnel, Tailscale, or an authenticating reverse proxy — full recipes in [Remote & VPS Setup](./remote-vps.md).
 
 `CLIDABLE_PORT` is also read by the `clidable team` CLI to find the server.
 

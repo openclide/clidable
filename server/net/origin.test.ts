@@ -10,8 +10,9 @@ const loopback: ServerConfig = {
   auth: "none",
   tls: null,
   dev: false,
+  allowLan: false,
 };
-const publicBind: ServerConfig = { ...loopback, bind: "0.0.0.0" };
+const publicBind: ServerConfig = { ...loopback, bind: "0.0.0.0", allowLan: true };
 
 /** Build a request with the given headers (Host defaults to the loopback server). */
 function reqWith(headers: Record<string, string>, host = "127.0.0.1:7878"): Request {

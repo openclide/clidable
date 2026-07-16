@@ -168,7 +168,7 @@ clidable team result
 When no subcommand is given, the binary starts the server:
 
 ```
-clidable-server [--port <n>] [--bind <loopback-addr>] [--dev]
+clidable-server [--port <n>] [--bind <addr>] [--allow-lan] [--dev]
 ```
 
-See [Running Clidable](./running-clidable.md#quick-reference-launch-flags) and the [Configuration Reference](./configuration.md) — including the important caveat that Clidable is **localhost-only**: a non-loopback `--bind` or any `--auth` / `--tls` flag makes the server refuse to start, and `--token` is parsed but currently unused (reserved for future server mode).
+See [Running Clidable](./running-clidable.md#quick-reference-launch-flags) and the [Configuration Reference](./configuration.md) — including the important caveat that Clidable is **localhost-only by default**: a non-loopback `--bind` makes the server refuse to start unless you add `--allow-lan` (or `CLIDABLE_ALLOW_LAN=1`), which permits the exposure but adds no authentication and prints a loud startup warning. `--auth` / `--tls` still refuse to start unconditionally (not implemented), and `--token` is parsed but currently unused (reserved for future server mode).

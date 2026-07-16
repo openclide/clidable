@@ -67,7 +67,7 @@ import {
   projectRemoveHandler,
   projectTouchHandler,
 } from "./routes/projects";
-import { checkProxyAllowed, parseProxyPath } from "./net/ssrf";
+import { checkProxyAllowed, isLoopbackHost, parseProxyPath } from "./net/ssrf";
 import { guardApiRoutes, isSameSiteRequest } from "./net/origin";
 import { startPortScanner } from "./preview/port-scan";
 import { devTerminalWebSocketHandler } from "./routes/dev-terminal-ws";
@@ -384,6 +384,18 @@ console.log(
 console.log(`[clidable] data:  ${paths.data}`);
 console.log(`[clidable] cache: ${paths.cache}`);
 console.log(`[clidable] log:   ${paths.log}`);
+
+// Loud, unmissable warning when bound beyond loopback (only reachable with the
+// --allow-lan opt-in): this is an unauthenticated, network-exposed PTY spawner.
+if (!isLoopbackHost(config.bind)) {
+  console.warn(
+    "\n\x1b[1;41m ⚠  NETWORK-EXPOSED \x1b[0m \x1b[1;33m--allow-lan is on.\x1b[0m\n" +
+      `Clidable is bound to ${config.bind}:${config.port} — anyone who can reach this\n` +
+      "address can spawn terminals on this machine. There is NO authentication.\n" +
+      "Only do this on a network you control (firewall/VPN). To lock it back down,\n" +
+      "drop --allow-lan / CLIDABLE_ALLOW_LAN and bind 127.0.0.1 (the default).\n",
+  );
+}
 
 // M-D: periodically scan each PTY session's process tree for listening
 // dev-server ports (catches servers that print no banner). Feeds the same
