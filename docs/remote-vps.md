@@ -114,6 +114,11 @@ clidable.example.com {
         # without this rewrite, every API request 403s:
         header_up Host {upstream_hostport}
     }
+    # Clickjacking defense on the app shell. Bun's native HTML bundling can't
+    # attach this to the document, so add it at the proxy (Clidable itself
+    # ships a frame-buster as a fallback).
+    header X-Frame-Options DENY
+    header Content-Security-Policy "frame-ancestors 'none'"
 }
 ```
 
@@ -138,6 +143,10 @@ server {
         # ($proxy_host is nginx's default; never use $host here.)
         proxy_set_header Host $proxy_host;
         proxy_read_timeout 1d;   # terminals are long-lived connections
+        # Clickjacking defense on the app shell (Bun can't attach it to the
+        # bundled HTML; Clidable also ships a frame-buster as a fallback).
+        add_header X-Frame-Options DENY;
+        add_header Content-Security-Policy "frame-ancestors 'none'";
     }
 }
 ```

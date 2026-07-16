@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isSameSiteRequest } from "./origin";
+import { guardApiRoutes, isSameSiteRequest } from "./origin";
 import { isLoopbackBind, isLoopbackHost } from "./ssrf";
 import type { ServerConfig } from "../cli";
 
@@ -171,6 +171,47 @@ describe("isSameSiteRequest — Host/Origin normalization (no legit blocks)", ()
   test("allows a Host-less non-browser request (contract: no Origin → pass)", () => {
     const req = new Request("http://127.0.0.1:7878/api/health"); // no Host, no Origin
     expect(isSameSiteRequest(req, loopback)).toBe(true);
+  });
+});
+
+describe("guardApiRoutes — baseline security headers", () => {
+  const ok = () => new Response("ok");
+  const req = (headers: Record<string, string> = {}) =>
+    new Request("http://127.0.0.1:7878/api/x", {
+      headers: { host: "127.0.0.1:7878", ...headers },
+    });
+
+  function expectHardened(res: Response): void {
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+  }
+
+  test("an allowed API response carries all four headers", async () => {
+    const routes = guardApiRoutes({ "/api/x": ok }, loopback) as Record<
+      string,
+      (req: Request, s: unknown) => Response | Promise<Response>
+    >;
+    expectHardened(await routes["/api/x"]!(req({ "sec-fetch-site": "same-origin" }), null));
+  });
+
+  test("the 403 cross-site refusal also carries them", async () => {
+    const routes = guardApiRoutes({ "/api/x": ok }, loopback) as Record<
+      string,
+      (req: Request, s: unknown) => Response | Promise<Response>
+    >;
+    const res = await routes["/api/x"]!(req({ "sec-fetch-site": "cross-site" }), null);
+    expect(res.status).toBe(403);
+    expectHardened(res);
+  });
+
+  test("a per-method map is wrapped and hardened", async () => {
+    const routes = guardApiRoutes({ "/api/x": { GET: ok } }, loopback) as Record<
+      string,
+      { GET: (req: Request, s: unknown) => Response | Promise<Response> }
+    >;
+    expectHardened(await routes["/api/x"]!.GET(req({ "sec-fetch-site": "same-origin" }), null));
   });
 });
 

@@ -29,7 +29,7 @@
  * Applied to every `/api/*` route and the `/proxy/*` bridge in server/index.ts.
  */
 import type { ServerConfig } from "../cli";
-import { jsonError } from "../http";
+import { applySecurityHeaders, jsonError } from "../http";
 import { isLoopbackBind, isLoopbackHost } from "./ssrf";
 
 /** Tauri custom-protocol webview origins (macOS / Windows). Clidable's webview
@@ -102,12 +102,31 @@ type RouteHandler = (req: Request, server: unknown) => unknown;
 function forbidden(): Response {
   // Same `{ ok:false, error }` envelope every other API error uses (no log
   // prefix → an attacker spamming blocked requests can't flood the log).
-  return jsonError(403, "cross-site request refused");
+  const res = jsonError(403, "cross-site request refused");
+  applySecurityHeaders(res.headers);
+  return res;
+}
+
+/** Add the baseline security headers to a handler's result, whether it's a
+ *  Response, a Promise of one, or a WS upgrade (undefined → left alone). */
+function withSecurityHeaders(result: unknown): unknown {
+  if (result instanceof Response) {
+    applySecurityHeaders(result.headers);
+    return result;
+  }
+  if (result instanceof Promise) {
+    return result.then((r) => {
+      if (r instanceof Response) applySecurityHeaders(r.headers);
+      return r;
+    });
+  }
+  return result;
 }
 
 /**
  * Wrap every `/api/*` route so a cross-site request is refused with a 403
- * BEFORE its handler runs — the terminal-WS upgrade (RCE surface) included.
+ * BEFORE its handler runs — the terminal-WS upgrade (RCE surface) included —
+ * and so every allowed response carries the baseline security headers.
  * Non-`/api` routes (the HTML app shell at "/" and "/home") pass through
  * untouched: they're top-level navigations with no Origin, and gating them
  * would only risk breaking the initial page load.
@@ -119,7 +138,9 @@ export function guardApiRoutes<T extends Record<string, unknown>>(
   const guard =
     (inner: RouteHandler): RouteHandler =>
     (req, server) =>
-      isSameSiteRequest(req, config) ? inner(req, server) : forbidden();
+      isSameSiteRequest(req, config)
+        ? withSecurityHeaders(inner(req, server))
+        : forbidden();
 
   const out: Record<string, unknown> = {};
   for (const [path, val] of Object.entries(routes)) {

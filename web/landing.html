@@ -13,6 +13,19 @@
       name="description"
       content="Clidable runs Claude Code, Codex, Antigravity and more as real terminals — with checkpoints you can rewind, a live preview, and one-click MCP, skills & plugins. Desktop, browser, or your phone."
     />
+    <!-- Anti-clickjacking (OWASP frame-buster) — see web/index.html for why. -->
+    <style>
+      html {
+        display: none;
+      }
+    </style>
+    <script>
+      if (self === top) {
+        document.documentElement.style.display = "block";
+      } else {
+        top.location = self.location;
+      }
+    </script>
     <link rel="icon" type="image/png" href="./logo.png" />
     <link rel="apple-touch-icon" href="./logo.png" />
     <link rel="stylesheet" href="./src/styles/globals.css" />
