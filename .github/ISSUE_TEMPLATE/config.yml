@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: https://github.com/openclide/clidable/blob/main/docs/README.md
+    about: Getting started, running, configuration, remote access, troubleshooting.
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/openclide/clidable/security/advisories/new
+    about: Clidable spawns terminals — please disclose exploitable issues privately.

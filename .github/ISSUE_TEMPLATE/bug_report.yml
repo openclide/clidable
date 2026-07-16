@@ -1,0 +1,49 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please check [Troubleshooting](https://github.com/openclide/clidable/blob/main/docs/troubleshooting.md) first — many issues have a known answer.
+
+        ⚠️ **Security issue?** Don't file it here — report it privately per [SECURITY.md](https://github.com/openclide/clidable/security/policy).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: Steps to reproduce, expected vs. actual behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: shell
+    attributes:
+      label: How are you running Clidable?
+      options:
+        - Browser (bun run dev)
+        - Compiled server binary (clidable-server)
+        - Desktop app (Tauri)
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Which agent(s)?
+      placeholder: Claude Code, Codex, Antigravity, …
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS + version, `bun --version`, Clidable version (from the welcome screen or `/api/health`).
+      placeholder: |
+        macOS 15.2, Bun 1.3.14, Clidable 0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log output
+      description: Relevant lines from the server terminal (the data/cache/log paths are printed at startup). Redact anything sensitive.
+      render: shell
