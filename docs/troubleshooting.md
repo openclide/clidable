@@ -8,8 +8,8 @@ Install Bun (`curl -fsSL https://bun.sh/install | bash`) and restart your shell.
 **The server refuses to start: "refusing to start: Clidable is localhost-only by default — `--bind 0.0.0.0` would expose unauthenticated remote code execution (PTY spawn) to the network…"**
 Working as intended — *any* non-loopback `--bind`/`CLIDABLE_BIND` (a LAN IP, `0.0.0.0`, `::`, a hostname) is refused by default, because it would let anyone who can reach the port spawn terminals on your machine. Bind a loopback address (`127.0.0.1` is the default); see [Remote & VPS Setup](./remote-vps.md) for safe remote access. If you control the network and accept the risk, `--allow-lan` (or `CLIDABLE_ALLOW_LAN=1`) is the intended way to opt in and bind a non-loopback address — the server then starts unauthenticated and prints a loud network-exposed warning.
 
-**The server refuses to start: "refusing to start: --auth / --tls are not implemented yet — Clidable is localhost-only…"**
-Also as intended — request-time auth and TLS don't exist yet, so the server refuses those flags rather than silently ignore them. Remove `--auth`/`--tls`, keep the loopback bind, and use the access layers in [Remote & VPS Setup](./remote-vps.md) for remote use.
+**The server refuses to start: "refusing to start: Clidable has no built-in auth/TLS by design…"**
+Also as intended — Clidable has no request-time auth or TLS by design (that's your access layer's job), so the server refuses those flags rather than silently ignore them. Remove `--auth`/`--tls`, keep the loopback bind, and use the access layers in [Remote & VPS Setup](./remote-vps.md) for remote use.
 
 **Port 7878 is already in use**
 Run on another port: `bun run dev` reads `CLIDABLE_PORT`, or pass `--port`:

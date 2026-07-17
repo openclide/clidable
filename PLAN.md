@@ -306,8 +306,8 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 - **Bun backend** (`bun build --compile`) → per-platform binaries (mac-arm64, mac-x64, linux-x64, linux-arm64, win-x64). ~60 MB each.
 - **Tauri shell**:
   - `tauri.conf.json` lists Bun binary as `externalBin` sidecar.
-  - On launch, Tauri spawns the Bun sidecar on a random localhost port with a per-launch URL token.
-  - Webview points at `http://127.0.0.1:<port>/?token=<...>`.
+  - On launch, Tauri spawns the Bun sidecar on a loopback port (`127.0.0.1`); the loopback bind + same-site gate are the protection — no URL token (Clidable has no auth, §12).
+  - Webview points at `http://127.0.0.1:<port>/`.
   - ~50 LOC of Rust + config. Final bundle ~80 MB.
 - **Web mode**: same Bun binary, no Tauri. `clidable serve --port 7878` and point any browser at it.
 - **UI detects shell**: `if (window.__TAURI__) { useTauriAPIs } else { browserFallbacks }` for OS-native features (file picker, system tray, deep links).
@@ -320,22 +320,19 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 
 ---
 
-## 12. Runs locally or in a server
+## 12. Runs locally or behind your own access layer
 
-**Decision**: Same Bun binary; different launch flags.
+**Decision**: One Bun binary, **localhost-only by design**. Remote access is the user's *access layer*, not Clidable's job — so Clidable ships **no built-in auth or TLS, ever**.
 
-- **Local mode** (default, used by Tauri shell): `clidable-server --port <random> --bind 127.0.0.1 --token <ephemeral>`. Loopback-only, single-user, URL-token auth.
-- **Server mode**: `clidable-server --port 443 --bind 0.0.0.0 --auth oauth --tls cert.pem`. Public-facing, real auth, TLS.
-- **Safety guard**: refuse to start with `--bind 0.0.0.0` AND `--auth none`. Unauth'd PTY-spawning over the internet = remote code execution.
-- Auth options for server mode: OAuth (GitHub/Google), JWT, shared-secret token. Pick OAuth by default.
-- Multi-user in server mode: per-user project isolation, per-user data dirs (`<server-data>/users/<id>/`).
-- Configuration via env vars + flags + `~/.clidable/config.toml`.
-- Secrets: OS keychain locally; env vars / sealed secrets file on server.
-- Health endpoint + structured logs (`pino` or similar) for ops.
+- **Local mode** (default, used by the Tauri shell): `clidable-server --bind 127.0.0.1` (the default). Loopback-only, single-user, no auth needed — nothing off-box can reach it.
+- **Remote access**: keep the loopback bind and put an **access layer** in front — **Tailscale/WireGuard** (recommended), **Cloudflare Tunnel + Access**, or an authenticating reverse proxy. That layer owns TLS *and* auth.
+- **`--allow-lan` escape hatch**: binds beyond loopback for a firewalled/VPN'd network you control. Adds no auth; prints a loud network-exposed warning. `--auth`/`--tls` are refused unconditionally (`refusing to start: Clidable has no built-in auth/TLS by design …`).
+- **Same-site gate + loopback-`Host` check** shield `/api` and the preview proxy from drive-by browser requests (CSRF / DNS-rebind) even on an `--allow-lan` bind — a hardening layer, **not** auth (`server/net/origin.ts`).
+- Health endpoint + structured logs for ops.
 
-**Inspiration**: standard local-vs-server CLI patterns; OpenClide's standalone Node deploy model.
+**Non-goal — built-in auth / TLS / multi-user.** Clidable spawns terminals, so network exposure is RCE by design; it never authenticates requests itself. *Multi-user* would require Clidable to know who the user is (= auth), so it's out too — a shared-team deployment is single-tenant Clidable behind an identity-aware proxy. This retires the old "server mode + auth" milestone.
 
-**Size**: ~300 LOC (auth middleware + CLI flag parsing + multi-user scoping).
+**Status**: shipped as scope-*removed* — the localhost-only guard, `--allow-lan`, and the same-site gate are already in the tree; there is no auth middleware to build.
 
 ---
 
@@ -350,7 +347,7 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 7. **AI Team (#5)** — role library, delegate recipes, lead serializers.
 8. **Glassmorphism polish (#9)** — design system pass.
 9. **Mobile / PWA (#10)** — responsive, service worker, manifest.
-10. **Server mode + auth (#12)** — multi-user, OAuth, TLS.
+10. ✅ **Localhost-only + access-layer model (#12)** — loopback default, `--allow-lan`, same-site gate shipped; **built-in auth / TLS / multi-user is a non-goal** (delegated to your tunnel/proxy).
 
 Each step ≈ 2–5 days of focused work. Net MVP target: ~6–8 weeks for one dedicated engineer.
 
@@ -361,5 +358,5 @@ Each step ≈ 2–5 days of focused work. Net MVP target: ~6–8 weeks for one d
 - Workflow / pipeline orchestration (rmr-style YAML workflows) — once free-form delegation is proven.
 - MCP bridge for structured event capture from agents — PTY-is-the-UI is the v1 stance; this is an upgrade.
 - Split-pane terminals.
-- Multi-user collaboration on the same project.
+- Multi-user collaboration on the same project (a shared session behind your access layer — not per-user auth; see §12).
 - Slack/Discord/Telegram mirroring of agent output.

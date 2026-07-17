@@ -3,7 +3,7 @@
 > **Build status — ✅ M-A through M-F shipped.** Projects registry + open/create
 > wizard (M-A), hardened preview iframe + address bar + shell-aware URL seam
 > (M-B/E1), output-mode URL detection (M-C), process-mode port scan (M-D),
-> auth'd reverse-proxy + WS bridge + SSRF gate (M-E), and own-the-spawn
+> same-site-gated reverse-proxy + WS bridge + SSRF gate (M-E), and own-the-spawn
 > dev-server auto-URL (M-F). Verified: `tsc` clean, 15 unit/integration tests
 > pass (sandbox regression, URL scanner, live port scan), `cargo check` green,
 > dev boots on :7878. macOS port detection + the full proxy/dev-server chain
@@ -114,13 +114,13 @@ All six ship as part of this milestone. The ordering below is dependency-driven,
 - **Verify:** start a server that prints nothing → still detected; confirm no false-positive on our own ports.
 - **New files:** `server/preview/port-scan.ts` *or* `src-tauri/src/portscan.rs` + a Tauri command.
 
-### M-E · Remote/mobile reachability — shell-aware URL resolution + auth'd port-proxy
-*E1 lands inside M-B so every later piece routes through one seam; E2/E3 pair with server/mobile mode (PLAN steps 9–10).*
+### M-E · Remote/mobile reachability — shell-aware URL resolution + same-site-gated port-proxy
+*E1 lands inside M-B so every later piece routes through one seam; E2/E3 pair with browser/remote access (PLAN §11–12).*
 
 - **E1 — Shell-aware URL resolution (build with M-B).** Tauri/local → iframe `http://localhost:<port>`; browser/remote → `/proxy/<port>/`. One resolver the address bar + detection chip + screenshots all call.
 - **E2 — Bun reverse-proxy.** `/proxy/:port/*` → `127.0.0.1:<port>` on the host (Bun.serve fetch-forward + WebSocket upgrade passthrough; ~30–50 LOC, no `http-proxy` dep). Rewrite absolute redirects against the base path (code-server's `proxyRes` trick).
-- **E3 — Auth + SSRF gate.** Proxy requires auth; refuse `--bind 0.0.0.0` + `--auth none` (PLAN §12). Port terax's `net.rs` hardening (IP classification, DNS-rebind pin, CRLF guard, scheme allowlist) — required once we forward arbitrary ports.
-- **Verify:** from a second device, load the Clidable host → preview reaches a dev server on the host's localhost; an unauth'd `/proxy` request is refused.
+- **E3 — Same-site + SSRF gate.** No proxy auth — Clidable is localhost-only by default and has **no built-in auth by design** (PLAN §12); `--allow-lan` opts into a non-loopback bind on a network you control. The proxy is guarded by the same-site gate (cross-site browser requests → 403) plus a loopback-only SSRF gate (numeric port only, never the server's own port; on `--allow-lan`, restricted to detected dev-server ports). Port terax's `net.rs` hardening (IP classification, DNS-rebind pin, CRLF guard, scheme allowlist) — required once we forward arbitrary ports.
+- **Verify:** from a second device (over your access layer), load the Clidable host → preview reaches a dev server on the host's localhost; a cross-site `/proxy` request is refused (403 — the same-site gate, not auth).
 - **New files:** `server/routes/proxy.ts`, `server/net/ssrf.ts`; `lib/preview-url.ts` (E1 resolver).
 
 ### M-F · Own-the-spawn auto-URL (for projects we scaffold)

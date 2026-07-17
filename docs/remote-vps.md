@@ -6,11 +6,11 @@ Everything (projects, agents, terminals, checkpoints) lives on the **server**. Y
 
 ## Security model — read this first
 
-> ⚠️ **Clidable has no working authentication yet, and anyone who can reach it can spawn a terminal on your server.** That is, by design, remote code execution for whoever connects.
+> ⚠️ **Clidable has no built-in authentication by design, and anyone who can reach it can spawn a terminal on your server.** That is, by design, remote code execution for whoever connects — authenticating access is *your* job (an access layer below).
 >
 > Concretely, in the current version:
 > - The server is **localhost-only by default**. It refuses to start on any non-loopback `--bind` — a LAN IP, `0.0.0.0`, even a Tailscale address — with: `refusing to start: Clidable is localhost-only by default — --bind … would expose unauthenticated remote code execution (PTY spawn) to the network`. You *can* override this with `--allow-lan` (or `CLIDABLE_ALLOW_LAN=1`) if you accept the risk on a network you control — but that binds an **unauthenticated** server directly to the network and only makes sense behind a firewall/VPN. The access layers below are the recommended path and keep the bind on loopback.
-> - `--auth` (any value other than `none`) and `--tls` are **refused at startup** — `refusing to start: --auth / --tls are not implemented yet` — because request-time auth and TLS don't exist yet. `--allow-lan` does **not** add authentication; it only lifts the bind restriction. `--token` / `CLIDABLE_TOKEN` is parsed but currently unused.
+> - `--auth` (any value other than `none`) and `--tls` are **refused at startup** — `refusing to start: Clidable has no built-in auth/TLS by design …` — because Clidable has no request-time auth or TLS by design (that's the access layer's job). `--allow-lan` does **not** add authentication; it only lifts the bind restriction.
 > - A same-site gate shields `/api` and `/proxy` from *browsers* (even on an `--allow-lan` bind): any request the browser marks cross-site — or, on a loopback bind, whose `Host` header isn't loopback — gets a 403 `cross-site request refused` (anti drive-by-RCE / CSRF / DNS-rebinding). Same-origin and non-browser clients (curl, the CLI) pass — this is **not** authentication.
 >
 > **Therefore: anything that can reach port 7878 can spawn terminals.** The safe default keeps Clidable on `127.0.0.1`; put one of the access layers below in front of it. All three are battle-tested patterns; pick the one that matches your comfort level.

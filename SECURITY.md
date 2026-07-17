@@ -22,9 +22,10 @@ boundary helps you deploy it safely and helps us triage reports.
   **localhost-only by default**: it refuses to start on any non-loopback
   `--bind` unless the user explicitly opts in with `--allow-lan` (an informed
   "I accept unauthenticated exposure on a network I control" choice, with a
-  loud startup warning). It refuses `--auth`/`--tls` unconditionally
-  (request-time auth and TLS are not implemented yet) rather than give false
-  assurance — `--allow-lan` lifts the bind restriction but adds no auth.
+  loud startup warning). It refuses `--auth`/`--tls` unconditionally — Clidable
+  has no built-in auth or TLS by design (authenticating remote access is your
+  access layer's job) — rather than give false assurance; `--allow-lan` lifts the
+  bind restriction but adds no auth.
 - **Same-site gate.** Because a loopback bind still doesn't stop a *web page the
   user visits* from reaching `127.0.0.1`, every `/api` route (and the terminal
   WebSocket) is guarded: cross-site browser requests are refused, and a

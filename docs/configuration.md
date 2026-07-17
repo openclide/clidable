@@ -9,9 +9,8 @@ Everything tunable: flags, environment variables, file locations, and the suppor
 | `--port <n>` | `CLIDABLE_PORT` | `7878` | Port for the UI, API, and terminals (1–65535) |
 | `--bind <addr>` | `CLIDABLE_BIND` | `127.0.0.1` | Interface to listen on. **Loopback by default** — `127.0.0.0/8`, `::1`, or `localhost`; a non-loopback bind refuses to start unless you add `--allow-lan` (see below) |
 | `--allow-lan` | `CLIDABLE_ALLOW_LAN` | off | Opt in to a non-loopback `--bind`, exposing the **unauthenticated** server to the network. Prints a loud startup warning; adds no auth. Env value accepts `1`/`true`/`yes`/`on` (see below) |
-| `--token <secret>` | `CLIDABLE_TOKEN` | — | Shared secret, reserved for a future server mode *(parsed, currently unused)* |
-| `--auth <mode>` | — | `none` | Only `none` is accepted — `token` / `oauth` refuse to start *(not implemented yet, see below)* |
-| `--tls <cert>` | — | — | Refuses to start *(not implemented — terminate TLS in a reverse proxy)* |
+| `--auth <mode>` | — | `none` | Only `none` is accepted — `token` / `oauth` refuse to start *(no built-in auth by design, see below)* |
+| `--tls <cert>` | — | — | Refuses to start *(no built-in TLS by design — terminate TLS in your tunnel or reverse proxy)* |
 | `--dev` | `NODE_ENV` | dev unless `NODE_ENV=production` | Dev conveniences: frontend hot reload, browser console streamed to the server log |
 
 Flags beat environment variables. Bun also auto-loads `.env` files from the working directory, so a `.env` with `CLIDABLE_PORT=9000` works.
@@ -41,14 +40,16 @@ drop --allow-lan / CLIDABLE_ALLOW_LAN and bind 127.0.0.1 (the default).
 
 Even on an `--allow-lan` public bind, the [same-site gate](#network-behavior) still runs: cross-site browser requests are refused with `403`, while same-origin requests and non-browser clients (`curl`, the `clidable` CLI) pass.
 
-`--auth token`, `--auth oauth`, and `--tls` are refused **unconditionally** — even with `--allow-lan` — because neither is implemented yet, and silently accepting them would be false assurance:
+`--auth token`, `--auth oauth`, and `--tls` are refused **unconditionally** — even with `--allow-lan` — because Clidable has no built-in auth or TLS by design (that's your access layer's job), and silently accepting them would be false assurance:
 
 ```
-refusing to start: --auth / --tls are not implemented yet — Clidable is
-localhost-only. Remove them and bind a loopback address.
+refusing to start: Clidable has no built-in auth/TLS by design — remote
+access is your access layer's job (Tailscale, Cloudflare Tunnel, or an
+authenticating reverse proxy). Remove --auth/--tls and bind a loopback
+address; see docs/remote-vps.md.
 ```
 
-> ⚠️ **Honest limitation:** there is no request-time auth and no TLS — that's *why* those flags are refused rather than ignored, and why `--allow-lan` only *permits* network exposure without securing it. `--token` / `CLIDABLE_TOKEN` is still parsed (the seam for a future server mode) but **no incoming request is checked against it**. For remote access, prefer keeping the loopback bind and using an SSH tunnel, Tailscale, or an authenticating reverse proxy — full recipes in [Remote & VPS Setup](./remote-vps.md).
+> ⚠️ **By design:** Clidable has no request-time auth and no TLS, and won't — authenticating remote access is your *access layer's* job. That's *why* those flags are refused rather than ignored, and why `--allow-lan` only *permits* network exposure without securing it. For remote access, keep the loopback bind and use an SSH tunnel, Tailscale, or an authenticating reverse proxy — full recipes in [Remote & VPS Setup](./remote-vps.md).
 
 `CLIDABLE_PORT` is also read by the `clidable team` CLI to find the server.
 
@@ -121,7 +122,7 @@ Terminals are spawned with the agent launched directly (not a wrapper shell), wi
 ## Platform support
 
 - **macOS** — fully exercised; the development platform. Desktop shell has native vibrancy blur.
-- **Linux** — supported (server mode is the primary use). Desktop shell falls back to a CSS gradient (no compositor blur).
+- **Linux** — supported (headless/remote use — a VPS behind your own access layer — is the primary use). Desktop shell falls back to a CSS gradient (no compositor blur).
 - **Windows** — supported by design (ConPTY via Bun ≥ 1.3.14, PowerShell-based port scan, Mica/Acrylic in the shell), but less battle-tested than macOS/Linux.
 
 Runtime requirements recap: **Bun ≥ 1.3.13** (to run from source; also needed for scaffolding and managed dev servers even with the compiled binary), **git**, and your agent CLIs.

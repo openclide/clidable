@@ -5,8 +5,8 @@
 # Clidable
 
 **CLI coding agents for everyone** — real terminals for Claude Code, Codex,
-Antigravity and friends, with rewindable checkpoints, live preview, one-click
-MCP/skills/plugins, and AI teams.
+Antigravity and friends, driven from a chat-style message box, with rewindable
+checkpoints, live preview, one-click MCP/skills/plugins, and AI teams.
 
 [![CI](https://github.com/openclide/clidable/actions/workflows/ci.yml/badge.svg)](https://github.com/openclide/clidable/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/openclide/clidable?sort=semver)](https://github.com/openclide/clidable/releases)
@@ -21,10 +21,12 @@ MCP/skills/plugins, and AI teams.
 
 Coding agents are brilliant on the command line and painful to live in.
 Clidable keeps each agent's **real terminal (TUI over a PTY)** and wraps it in a
-workspace built for actually shipping: snapshot-before-every-message checkpoints
-you can rewind in a click, a live preview of your app beside the terminal, and
-one place to manage MCP servers, skills, and plugins across every agent. One Bun
-process, one port — on your desktop, in the browser, or from your phone.
+workspace built for actually shipping: a chat-style **composer** so you talk to
+the agent through a real text box instead of raw TUI input,
+snapshot-before-every-message checkpoints you can rewind in a click, a live
+preview of your app beside the terminal, and one place to manage MCP servers,
+skills, and plugins across every agent. One Bun process, one port — on your
+desktop, in the browser, or from your phone.
 
 ## Install
 
@@ -62,6 +64,11 @@ cd clidable && bun install && bun run dev
 - **Agents in real terminals** — Claude Code, Codex, Antigravity, Kimi,
   OpenCode, GitHub Copilot and more, each in its true TUI over a PTY. Never
   headless, never a JSON stream.
+- **A textbox, not raw TUI input** — under every terminal sits the composer: a
+  real text box with multi-line editing and image/file attachments. Enter
+  delivers your message to the agent as one clean bracketed paste (no more
+  premature submits mid-paste), with a checkpoint snapped first. The terminal
+  above stays fully interactive when you want to drive the TUI directly.
 - **Checkpoints you can rewind** — a snapshot before every message in a private
   shadow-git repo; rewind the whole project in one click. Your real `.git` is
   never touched.
@@ -101,7 +108,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow and
 Pre-1.0, core experience working: terminals + composer, checkpoints, code
 editor + diffs, projects + preview, skills/MCP/plugins/instructions managers,
 AI-team delegation. On the roadmap: checkpoint retention, signed desktop
-bundles, server-mode auth, mobile/PWA polish. See [PLAN.md](PLAN.md).
+bundles, mobile/PWA polish. See [PLAN.md](PLAN.md).
 
 ## License
 
