@@ -200,8 +200,11 @@ export async function fsListHandler(req: Request): Promise<Response> {
  *
  * Unlike fsList this is NOT sandboxed to a project root: its whole job is to
  * navigate the host filesystem so the user can *pick* a project root. That's
- * acceptable in local single-user mode; server mode gates it behind auth
- * (PLAN §12 / M-E3) before exposing it publicly.
+ * acceptable because Clidable is localhost-only + single-user by default and
+ * has NO built-in auth by design (PLAN §12): reaching this endpoint beyond
+ * loopback requires `--allow-lan` or a tunnel/reverse proxy, so the operator's
+ * access layer is what gates it. The same-site gate blocks browser drive-by
+ * (server/net/origin.ts) but is not authentication.
  */
 export async function fsBrowseHandler(req: Request): Promise<Response> {
   const url = new URL(req.url);

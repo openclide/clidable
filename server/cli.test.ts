@@ -61,8 +61,8 @@ describe("parseConfig — localhost-only default + --allow-lan escape hatch", ()
     expect(config.allowLan).toBe(true);
   });
 
-  test("--auth / --tls are still refused regardless of --allow-lan (not implemented)", () => {
+  test("--auth / --tls are still refused regardless of --allow-lan (no auth by design)", () => {
     withArgs(["--bind", "0.0.0.0", "--allow-lan", "--auth", "token"]);
-    expect(() => parseConfig()).toThrow(/--auth \/ --tls are not implemented/);
+    expect(() => parseConfig()).toThrow(/no built-in auth\/TLS by design/);
   });
 });

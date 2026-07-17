@@ -6,9 +6,6 @@ import type { ServerConfig } from "../cli";
 const loopback: ServerConfig = {
   port: 7878,
   bind: "127.0.0.1",
-  token: null,
-  auth: "none",
-  tls: null,
   dev: false,
   allowLan: false,
 };
