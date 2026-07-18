@@ -49,6 +49,11 @@ export class Session {
   // idle-session reaper so a closed tab / reloaded page / crashed client
   // doesn't leak the PTY forever.
   private detachedAt: number | null = Date.now();
+  // Connections that declared ownership of this session via `retain` (one
+  // token per WebSocket). A retained session is exempt from the reaper even
+  // with zero subscribers — background tabs and minimized terminals have no
+  // output subscriber but must survive past the detach grace period.
+  private retainers = new Set<unknown>();
   private ring: RingBuffer = { chunks: [], bytes: 0 };
   private exited = false;
   private exitCode: number | null = null;
@@ -162,12 +167,28 @@ export class Session {
 
   unsubscribe(sub: SessionSubscriber): void {
     this.subscribers.delete(sub);
-    // Last viewer left — start the idle countdown.
-    if (this.subscribers.size === 0) this.detachedAt = Date.now();
+    // Last viewer left AND no client retains us — start the idle countdown.
+    if (this.subscribers.size === 0 && this.retainers.size === 0) {
+      this.detachedAt = Date.now();
+    }
   }
 
-  /** Milliseconds since the last subscriber detached, or null if still
-   *  attached. Drives the manager's idle-session reaper. */
+  /** Declare ownership without subscribing to output — exempts the session
+   *  from the reaper while `token`'s connection lives. Idempotent per token. */
+  retain(token: unknown): void {
+    this.retainers.add(token);
+    this.detachedAt = null;
+  }
+
+  release(token: unknown): void {
+    this.retainers.delete(token);
+    if (this.subscribers.size === 0 && this.retainers.size === 0) {
+      this.detachedAt = Date.now();
+    }
+  }
+
+  /** Milliseconds since the last subscriber/retainer detached, or null if
+   *  still attached. Drives the manager's idle-session reaper. */
   detachedFor(now: number): number | null {
     return this.detachedAt === null ? null : now - this.detachedAt;
   }

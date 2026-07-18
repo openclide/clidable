@@ -26,8 +26,9 @@ export interface TerminalSubscriberCallbacks {
 interface SubscriberEntry {
   id: string;
   callbacks: TerminalSubscriberCallbacks;
-  /** Pending open params (re-sent on reconnect if not yet subscribed). */
-  openParams?: {
+  /** Params to (re-)open this session, re-sent on every (re)connect. The
+   *  server's `open` is idempotent — it spawns or re-attaches as needed. */
+  openParams: {
     agent: TerminalAgentId;
     projectPath: string;
     cols: number;
@@ -36,10 +37,21 @@ interface SubscriberEntry {
 }
 
 class TerminalClient {
+  /** The OPEN socket (send path), or null. */
   private ws: WebSocket | null = null;
-  private connecting = false;
+  /** The newest socket, including one still CONNECTING. Event handlers
+   *  compare against this so a superseded socket's open/close/message can
+   *  never clobber the live connection's state (stale onclose used to reset
+   *  the backoff flags and spawn a duplicate connection — double output). */
+  private current: WebSocket | null = null;
   private subscribers = new Map<string, SubscriberEntry>();
   private reconnectDelay = 250;
+  /** Last retained-id set sent to the server (open tabs + minimized). */
+  private retained: string[] = [];
+  /** Kills requested while disconnected — flushed on the next open socket
+   *  so "close terminal during a network blip" still SIGTERMs the PTY
+   *  instead of leaving it to the 10-minute reaper. */
+  private pendingKills = new Set<string>();
 
   /**
    * Open or attach to a session. Returns a dispose() that unsubscribes
@@ -94,7 +106,7 @@ class TerminalClient {
 
   resize(id: string, cols: number, rows: number): void {
     const entry = this.subscribers.get(id);
-    if (entry?.openParams) {
+    if (entry) {
       entry.openParams.cols = cols;
       entry.openParams.rows = rows;
     }
@@ -115,8 +127,38 @@ class TerminalClient {
       this.ws.send(
         JSON.stringify({ type: "close", id } satisfies TerminalClientMessage),
       );
+    } else {
+      this.pendingKills.add(id);
+      this.ensureConnected();
     }
     this.subscribers.delete(id);
+  }
+
+  /**
+   * Declare the full set of session ids this client owns (open tabs +
+   * minimized terminals). Retained sessions are exempt from the server's
+   * idle-session reaper even with no output subscriber. Idempotent — the
+   * server diffs against the previous set; ids no longer listed are
+   * released and start the normal detach-grace countdown.
+   */
+  retain(ids: string[]): void {
+    // Compare as sets — the server diffs retention by membership, so a mere
+    // reorder (same ids) shouldn't trigger a resend.
+    const prev = new Set(this.retained);
+    const same = ids.length === prev.size && ids.every((id) => prev.has(id));
+    this.retained = ids;
+    if (same) return;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({ type: "retain", ids } satisfies TerminalClientMessage),
+      );
+    } else if (ids.length > 0) {
+      // No socket (e.g. everything is minimized, so no subscriber kept it
+      // alive) — reconnect; onopen re-sends the retained set. Releasing to an
+      // empty set needs no socket: a prior socket already released everything
+      // server-side when it closed, so don't reconnect just to send nothing.
+      this.ensureConnected();
+    }
   }
 
   private unsubscribe(id: string): void {
@@ -132,50 +174,81 @@ class TerminalClient {
   }
 
   private ensureConnected(): void {
-    if (this.ws) {
-      if (this.ws.readyState === WebSocket.OPEN) return;
-      if (this.ws.readyState === WebSocket.CONNECTING) return;
+    // A CLOSING socket falls through — it can't carry traffic anymore, so a
+    // replacement starts now; identity checks below keep its late events inert.
+    const cur = this.current;
+    if (
+      cur &&
+      (cur.readyState === WebSocket.OPEN ||
+        cur.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
     }
-    if (this.connecting) return;
-    this.connecting = true;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${proto}//${location.host}/api/terminal`);
     ws.binaryType = "arraybuffer";
+    this.current = ws;
 
     ws.onopen = () => {
-      this.connecting = false;
+      if (this.current !== ws) {
+        // Superseded while connecting — don't fight the newer socket.
+        ws.close();
+        return;
+      }
       this.reconnectDelay = 250;
       this.ws = ws;
-      // Send open (or subscribe, if the server already has the session
-      // from a prior connection) for every known subscriber.
+      // Kills queued while offline go first, so a same-id reopen below
+      // spawns fresh instead of attaching to the half-dead old session.
+      for (const id of this.pendingKills) {
+        ws.send(
+          JSON.stringify({ type: "close", id } satisfies TerminalClientMessage),
+        );
+      }
+      this.pendingKills.clear();
+      // Re-declare retention next — a fresh connection has an empty
+      // retained set server-side, and minimized terminals have no
+      // subscriber below to re-attach them.
+      if (this.retained.length > 0) {
+        ws.send(
+          JSON.stringify({
+            type: "retain",
+            ids: this.retained,
+          } satisfies TerminalClientMessage),
+        );
+      }
+      // (Re)open every known subscriber. The server's `open` is idempotent —
+      // it spawns a new session or re-attaches to an existing one, so we never
+      // need a separate "subscribe" path.
       for (const [id, entry] of this.subscribers) {
-        if (entry.openParams) {
-          ws.send(
-            JSON.stringify({
-              type: "open",
-              id,
-              ...entry.openParams,
-            } satisfies TerminalClientMessage),
-          );
-        } else {
-          ws.send(
-            JSON.stringify({
-              type: "subscribe",
-              id,
-            } satisfies TerminalClientMessage),
-          );
-        }
+        ws.send(
+          JSON.stringify({
+            type: "open",
+            id,
+            ...entry.openParams,
+          } satisfies TerminalClientMessage),
+        );
       }
     };
 
-    ws.onmessage = (e) => this.onMessage(e);
+    // Identity-gated: a superseded socket must not deliver duplicate output
+    // or tear down state that now belongs to its replacement.
+    ws.onmessage = (e) => {
+      if (this.current === ws) this.onMessage(e);
+    };
 
     ws.onclose = () => {
+      if (this.current !== ws) return; // stale socket's close — ignore
+      this.current = null;
       this.ws = null;
-      this.connecting = false;
       // Reconnect with capped exponential backoff so long as we have
-      // subscribers waiting.
-      if (this.subscribers.size > 0) {
+      // subscribers waiting — or retained (e.g. minimized) sessions /
+      // queued kills, which have no subscriber but need a connection to
+      // reach the server.
+      if (
+        this.subscribers.size > 0 ||
+        this.retained.length > 0 ||
+        this.pendingKills.size > 0
+      ) {
         const delay = this.reconnectDelay;
         this.reconnectDelay = Math.min(delay * 2, 5000);
         setTimeout(() => this.ensureConnected(), delay);

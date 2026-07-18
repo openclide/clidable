@@ -28,6 +28,9 @@ interface Props {
   /** Dev-server terminal sheet state + toggle (also reachable from the layout menu). */
   termOpen: boolean;
   onToggleTerminal: () => void;
+  /** Terminal dock (roster of all terminals) visibility + toggle. */
+  dockVisible: boolean;
+  onToggleDock: () => void;
   onBack: () => void;
   onOpenTool?: (tool: WorkspaceTool) => void;
 }
@@ -51,6 +54,8 @@ export function TopChrome({
   onSetPreviewSize,
   termOpen,
   onToggleTerminal,
+  dockVisible,
+  onToggleDock,
   onBack,
   onOpenTool,
 }: Props) {
@@ -119,6 +124,8 @@ export function TopChrome({
         onSetPreviewSize={onSetPreviewSize}
         termOpen={termOpen}
         onToggleTerminal={onToggleTerminal}
+        dockVisible={dockVisible}
+        onToggleDock={onToggleDock}
       />
     </header>
   );
@@ -143,6 +150,8 @@ function LayoutMenu({
   onSetPreviewSize,
   termOpen,
   onToggleTerminal,
+  dockVisible,
+  onToggleDock,
 }: {
   previewPct: number;
   previewMode: PreviewMode;
@@ -151,6 +160,8 @@ function LayoutMenu({
   onSetPreviewSize: (pct: number) => void;
   termOpen: boolean;
   onToggleTerminal: () => void;
+  dockVisible: boolean;
+  onToggleDock: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -238,6 +249,17 @@ function LayoutMenu({
           checked={termOpen}
           onClick={onToggleTerminal}
           icon={<TerminalGlyph />}
+        />
+        <MenuRow
+          label="Terminal dock"
+          checked={dockVisible}
+          onClick={onToggleDock}
+          icon={
+            <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+              <line x1="3" y1="15" x2="21" y2="15" />
+            </svg>
+          }
         />
 
         <div className="mx-1 my-1 h-px bg-white/[0.06]" />

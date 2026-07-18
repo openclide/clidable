@@ -12,6 +12,15 @@ import {
 } from "../welcome/data";
 import { PositionedPortal } from "../ui/PositionedPortal";
 import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
+import {
+  clearTerminalDrag,
+  currentTerminalDrag,
+  hasTerminalDrag,
+  isLeavingTarget,
+  readTerminalDrag,
+  setTerminalDragData,
+  type TerminalDragPayload,
+} from "./terminal-dnd";
 import type { LeafPane, TileTerminal } from "./paneTree";
 
 interface Props {
@@ -26,11 +35,20 @@ interface Props {
   mobile?: boolean;
   /** When false, the per-pane close interaction is suppressed (last pane). */
   canRemove: boolean;
+  /** Collapsed to its header bar (see LeafPane.collapsed). */
+  collapsed?: boolean;
   onPickForTab: (tabIndex: number, next: { projectId: string; agentId: AgentId }) => void;
   onCloseTab: (tabIndex: number) => void;
   onSelectTab: (tabIndex: number) => void;
   onFocus: () => void;
   onSplit: (direction: "row" | "column" | "tab") => void;
+  /** Collapse a tab out of the layout into the minimized dock. */
+  onMinimize: (tabIndex: number) => void;
+  /** Collapse this pane in place to its header bar / expand it back. */
+  onToggleCollapse: () => void;
+  /** A tab chip was dragged here — move it into this leaf. `toTabIndex` is
+   *  the insert-before position; omitted = append. */
+  onMoveTab: (from: TerminalDragPayload, toTabIndex?: number) => void;
   /** Leave the workspace — used when the sole, never-assigned pane is closed. */
   onExit: () => void;
 }
@@ -49,11 +67,14 @@ export function TerminalTile({
   compact,
   mobile,
   canRemove,
+  collapsed,
   onPickForTab,
   onCloseTab,
   onSelectTab,
   onFocus,
   onSplit,
+  onToggleCollapse,
+  onMoveTab,
   onExit,
 }: Props) {
   if (leaf.tabs.length === 0) {
@@ -64,6 +85,7 @@ export function TerminalTile({
         mobile={mobile}
         onPick={(next) => onPickForTab(0, next)}
         onSplit={onSplit}
+        onDropTerminal={(from) => onMoveTab(from)}
         // Close this never-assigned pane: collapse into the sibling when one
         // exists, otherwise (the sole pane) leave to the project picker —
         // there'd be nothing left to show.
@@ -90,9 +112,26 @@ export function TerminalTile({
   return (
     <div
       onMouseDown={onFocus}
+      // Whole-tile drop target: dropping a dragged tab anywhere on the tile
+      // appends it to this leaf (chips intercept for insert-before). Only for
+      // CROSS-pane drags — a micro-drag of this pane's own chip released over
+      // the body must stay a click-like no-op, not a surprise move-to-end.
+      onDragOver={(e) => {
+        if (!hasTerminalDrag(e)) return;
+        if (currentTerminalDrag()?.paneId === leaf.id) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(e) => {
+        const payload = readTerminalDrag(e);
+        if (!payload || payload.paneId === leaf.id) return;
+        e.preventDefault();
+        onMoveTab(payload);
+      }}
       className={`
         glass flex h-full min-h-0 flex-col overflow-hidden rounded-2xl
         transition-[border-color] duration-200
+        ${collapsed ? "justify-center" : ""}
         ${
           // The card's surface (fill, blur, shadow, hairline) is all `.glass`.
           // Focus just recolors that ONE border — brighter when focused — so
@@ -102,7 +141,9 @@ export function TerminalTile({
         }
       `}
     >
-      <header className="flex shrink-0 items-center gap-1.5 px-3 pt-3">
+      <header
+        className={`flex shrink-0 items-center gap-1.5 px-3 ${collapsed ? "py-0" : "pt-3"}`}
+      >
         {/* Strip is content-sized (no flex-1) so `+` sits right next to
             the last pill when tabs fit. With `min-w-0` + `overflow-x-auto`
             it shrinks under pressure so the `+` stays pinned right
@@ -125,10 +166,28 @@ export function TerminalTile({
                 showClose={showCloseOnTab}
                 onSelect={() => onSelectTab(i)}
                 onClose={() => onCloseTab(i)}
+                onDragStartChip={
+                  t
+                    ? (e) =>
+                        setTerminalDragData(e, {
+                          paneId: leaf.id,
+                          tabIndex: i,
+                        })
+                    : undefined
+                }
+                onDropBefore={(from) => onMoveTab(from, i)}
               />
             );
           })}
         </div>
+        {/* Collapse needs a sibling to grow into, so it's offered only in a
+            split. But the EXPAND control must ALWAYS be present on an
+            already-collapsed pane — otherwise a pane that became the sole leaf
+            (or lost its assigned active tab) while collapsed would be stuck
+            with no way back. */}
+        {!mobile && (collapsed || (activeTab && canRemove)) && (
+          <CollapseButton collapsed={collapsed} onClick={onToggleCollapse} />
+        )}
         {mobile ? (
           <AddTabButton onClick={() => onSplit("tab")} />
         ) : (
@@ -136,7 +195,8 @@ export function TerminalTile({
         )}
       </header>
 
-      {activeTab && activeProject ? (
+      {/* Body is hidden while collapsed — the pane is just its header bar. */}
+      {collapsed ? null : activeTab && activeProject ? (
         <>
           <div className="min-h-0 flex-1 overflow-hidden">
             <TerminalView
@@ -188,6 +248,8 @@ function TabChip({
   showClose,
   onSelect,
   onClose,
+  onDragStartChip,
+  onDropBefore,
 }: {
   tab: TileTerminal | null;
   /** Project initial to prefix (set only when 2+ projects are open). */
@@ -198,7 +260,12 @@ function TabChip({
   showClose: boolean;
   onSelect: () => void;
   onClose: () => void;
+  /** Present only for assigned tabs — makes the chip a drag source. */
+  onDragStartChip?: (e: React.DragEvent) => void;
+  /** A dragged tab was dropped on this chip → insert before it. */
+  onDropBefore: (from: TerminalDragPayload) => void;
 }) {
+  const [dropHover, setDropHover] = useState(false);
   const agent = tab ? getAgent(tab.agentId) : null;
   const agentName = agent ? shortAgentName(agent.name) : "";
   // Accessible name + hover title — the project otherwise shows only as an
@@ -214,6 +281,28 @@ function TabChip({
       onClick={onSelect}
       title={label}
       aria-label={label}
+      draggable={!!onDragStartChip}
+      onDragStart={onDragStartChip}
+      // dragend fires on the SOURCE after drop or cancel — the one reliable
+      // place to forget the window-local drag payload.
+      onDragEnd={onDragStartChip ? clearTerminalDrag : undefined}
+      onDragOver={(e) => {
+        if (!hasTerminalDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setDropHover(true);
+      }}
+      onDragLeave={(e) => {
+        if (isLeavingTarget(e)) setDropHover(false);
+      }}
+      onDrop={(e) => {
+        setDropHover(false);
+        const payload = readTerminalDrag(e);
+        if (!payload) return;
+        e.preventDefault();
+        e.stopPropagation(); // don't let the tile's append-drop also fire
+        onDropBefore(payload);
+      }}
       className={`
         group/tab relative flex shrink-0 items-center gap-2 rounded-xl
         px-2.5 py-1.5
@@ -228,6 +317,13 @@ function TabChip({
       `}
       style={agent ? ({ "--agent": agent.color } as React.CSSProperties) : {}}
     >
+      {/* Insert-before caret while a dragged tab hovers this chip. */}
+      {dropHover && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-1 -left-1 w-0.5 rounded-full bg-white/70"
+        />
+      )}
       {tab && agent ? (
         <>
           {projectName && (
@@ -478,12 +574,47 @@ function SplitGlyph({ direction }: { direction: "row" | "column" | "tab" }) {
   );
 }
 
+/** Collapse this pane to its header bar (sibling grows to fill), or expand it
+ *  back when already collapsed. Mirrors AddTabButton's chrome so the header
+ *  controls read as one set. */
+function CollapseButton({
+  collapsed,
+  onClick,
+}: {
+  collapsed?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      title={collapsed ? "Expand pane" : "Collapse pane"}
+      aria-label={collapsed ? "Expand pane" : "Collapse pane"}
+      className="
+        flex size-7 shrink-0 items-center justify-center rounded-xl
+        text-foreground/45
+        transition-[background-color,color] duration-150
+        hover:bg-white/[0.05] hover:text-foreground/85
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30
+      "
+    >
+      <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <path d={collapsed ? "M6 9l6 6 6-6" : "M5 12h14"} />
+      </svg>
+    </button>
+  );
+}
+
 function EmptyTile({
   openProjects,
   activeProjectId,
   mobile,
   onPick,
   onSplit,
+  onDropTerminal,
   onClose,
 }: {
   openProjects: MockProject[];
@@ -491,18 +622,39 @@ function EmptyTile({
   mobile?: boolean;
   onPick: (next: { projectId: string; agentId: AgentId }) => void;
   onSplit: (direction: "row" | "column" | "tab") => void;
+  /** A dragged tab was dropped here — move it into this empty pane. */
+  onDropTerminal: (from: TerminalDragPayload) => void;
   /** Dismiss this never-assigned pane (collapse to sibling, or leave). */
   onClose: () => void;
 }) {
+  const [dropHover, setDropHover] = useState(false);
   return (
     <div
-      className="
+      onDragOver={(e) => {
+        if (!hasTerminalDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setDropHover(true);
+      }}
+      onDragLeave={(e) => {
+        if (isLeavingTarget(e)) setDropHover(false);
+      }}
+      onDrop={(e) => {
+        setDropHover(false);
+        const payload = readTerminalDrag(e);
+        if (!payload) return;
+        e.preventDefault();
+        onDropTerminal(payload);
+      }}
+      className={`
         glass
         group/empty relative h-full min-h-0 overflow-hidden
-        rounded-2xl border border-dashed border-white/[0.08]
+        rounded-2xl border border-dashed
         bg-white/[0.005]
         text-foreground/45
-      "
+        transition-[border-color] duration-150
+        ${dropHover ? "border-white/[0.3]" : "border-white/[0.08]"}
+      `}
     >
       <EmptyPicker
         openProjects={openProjects}

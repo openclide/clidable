@@ -64,10 +64,15 @@ export type TerminalClientMessage =
       cols: number;
       rows: number;
     }
-  | { type: "subscribe"; id: string }
   | { type: "unsubscribe"; id: string }
   | { type: "resize"; id: string; cols: number; rows: number }
-  | { type: "close"; id: string };
+  | { type: "close"; id: string }
+  /** Full set of session ids this client still owns (open tabs + minimized
+   *  terminals). Retained sessions are exempt from the server's idle-session
+   *  reaper even with no output subscriber — a minimized or backgrounded
+   *  terminal must survive past the detach grace period. Idempotent: the
+   *  server diffs against the previous set from this connection. */
+  | { type: "retain"; ids: string[] };
 
 /** Server → Client (text JSON). I/O bytes use binary frames. */
 export type TerminalServerMessage =

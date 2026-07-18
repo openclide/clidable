@@ -17,6 +17,7 @@ import { AGENTS, getAgent, type AgentId, type AgentInfo } from "../welcome/data"
 import { AgentIcon } from "../icons/AgentIcon";
 import { PositionedPortal } from "../ui/PositionedPortal";
 import { terminalClient } from "../../lib/terminal-client";
+import { registerComposerFocus } from "../../lib/composer-focus";
 import {
   createCheckpoint,
   getCachedMostRecent,
@@ -479,6 +480,13 @@ export function Composer({
     // becomes a need we'll add a reconfigure step.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Let a dock/roster selection move keyboard focus into this composer. The
+  // editor is created in the effect above (declared first, so it runs first),
+  // so viewRef is set by the time a pending request is honored here.
+  useEffect(() => {
+    return registerComposerFocus(sessionId, () => viewRef.current?.focus());
+  }, [sessionId]);
 
   const uploading = attachments.some((a) => a.path === null);
   const canSend = (!isEmpty || attachments.length > 0) && !uploading;

@@ -13,7 +13,7 @@
  */
 import type { ServerWebSocket } from "bun";
 import { sessionManager } from "../pty/manager";
-import type { Session, SessionSubscriber } from "../pty/session";
+import { type Session, type SessionSubscriber } from "../pty/session";
 import {
   TERMINAL_FRAME_KIND_INPUT,
   TERMINAL_FRAME_KIND_OUTPUT,
@@ -25,11 +25,18 @@ import {
 interface TerminalSocketData {
   /** Map of session-id → subscriber registered for THIS socket. */
   subs: Map<string, SessionSubscriber>;
+  /** Session ids this client declared ownership of via `retain` — kept even
+   *  for ids with no live session yet, so retention can be re-applied after
+   *  `open` finishes spawning (retain can race an in-flight spawn). */
+  retained: Set<string>;
 }
 
 export const terminalWebSocketHandler = {
   open(ws: ServerWebSocket<TerminalSocketData>) {
-    ws.data = { subs: new Map() };
+    ws.data = {
+      subs: new Map(),
+      retained: new Set(),
+    };
   },
 
   async message(
@@ -63,6 +70,12 @@ export const terminalWebSocketHandler = {
       session?.unsubscribe(sub);
     }
     ws.data.subs.clear();
+    // Drop this connection's retentions — with no client left claiming them,
+    // the sessions start the normal detach-grace countdown.
+    for (const id of ws.data.retained) {
+      sessionManager.get(id)?.release(ws);
+    }
+    ws.data.retained.clear();
   },
 
   // Backpressure: pause-resume support could go here later.
@@ -88,7 +101,15 @@ async function handleControl(
         cols: msg.cols,
         rows: msg.rows,
       });
+      // The socket may have closed while the spawn was in flight (page
+      // reload mid-open). Attaching its dead subscriber would pin the
+      // session (detachedAt stays null) so the reaper could never collect
+      // it — bail and let the fresh session sit detached instead.
+      if (ws.readyState !== 1 /* OPEN */) return;
       attachSubscriber(ws, session);
+      // A `retain` for this id may have arrived while the spawn was still
+      // in flight (no session to pin yet) — apply it now.
+      if (ws.data.retained.has(session.id)) session.retain(ws);
       sendServer(ws, {
         type: "ready",
         id: session.id,
@@ -106,30 +127,6 @@ async function handleControl(
         code: e.code ?? "OPEN_FAILED",
         message: e.message ?? "Failed to open session",
       });
-    }
-    return;
-  }
-
-  if (msg.type === "subscribe") {
-    const session = sessionManager.get(msg.id);
-    if (!session) {
-      sendServer(ws, {
-        type: "error",
-        id: msg.id,
-        code: "NO_SUCH_SESSION",
-        message: `No session for id ${msg.id}`,
-      });
-      return;
-    }
-    attachSubscriber(ws, session);
-    sendServer(ws, {
-      type: "ready",
-      id: session.id,
-      agent: session.agent,
-      replayLength: session.replayLength,
-    });
-    if (session.replayLength > 0) {
-      sendOutputFrame(ws, session.id, session.getReplay());
     }
     return;
   }
@@ -154,7 +151,23 @@ async function handleControl(
       sessionManager.get(msg.id)?.unsubscribe(sub);
       ws.data.subs.delete(msg.id);
     }
+    ws.data.retained.delete(msg.id);
     sessionManager.kill(msg.id);
+    return;
+  }
+
+  if (msg.type === "retain") {
+    const next = new Set(msg.ids);
+    // Release sessions this client no longer claims…
+    for (const id of ws.data.retained) {
+      if (!next.has(id)) sessionManager.get(id)?.release(ws);
+    }
+    // …and pin every claimed one (idempotent; ids without a live session
+    // stay in the set and get pinned when their `open` completes).
+    for (const id of next) {
+      sessionManager.get(id)?.retain(ws);
+    }
+    ws.data.retained = next;
     return;
   }
 }

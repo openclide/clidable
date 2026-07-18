@@ -16,18 +16,24 @@ import {
   clearProject,
   findLeaf,
   flattenToTabs,
+  insertTab,
+  moveTab,
   nextPaneId,
   removeTab,
   setActiveTab,
+  setCollapsed,
   setTab,
   splitLeaf,
   type Pane,
   type PaneId,
+  type TileTerminal,
 } from "./paneTree";
+import { TerminalDock, type DockEntry } from "./TerminalDock";
 import type { AgentId, MockProject } from "../welcome/data";
 import type { WorkspaceTool } from "./WorkspaceTools";
 import { subscribeRevealChanges } from "../../lib/diff-base-store";
 import { terminalClient } from "../../lib/terminal-client";
+import { requestComposerFocus } from "../../lib/composer-focus";
 
 /* ---------------------------------------------------------------------------
  * Preview-pane sizing. The divider between the terminal and the preview drags
@@ -89,6 +95,18 @@ interface Props {
 }
 
 /**
+ * A terminal collapsed into the dock, plus where it came from so restoring
+ * can return it to its original pane and tab position rather than dumping it
+ * into whichever pane happens to be focused. The origin is best-effort: if
+ * that pane has since collapsed out of the tree (e.g. it was the pane's last
+ * tab), restore falls back to the focused pane.
+ */
+interface MinimizedTerminal {
+  tab: TileTerminal;
+  origin: { paneId: PaneId; tabIndex: number };
+}
+
+/**
  * Multi-project workspace with a tmux-style pane tree. Each leaf can also
  * hold multiple tabs (multiplexed terminals in the same pane). The `+` in
  * each tile's header opens a 3-option menu: side / bottom / tab.
@@ -119,6 +137,16 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
   const [focusedPaneId, setFocusedPaneId] = useState<PaneId>(
     () => allLeaves(paneRoot)[0]!.id,
   );
+
+  // Terminals collapsed out of the pane tree into the dock strip. Their PTY
+  // sessions keep running server-side (the retain protocol below exempts
+  // them from the idle-session reaper); restoring re-attaches the stream.
+  // Each carries its origin so restore lands it back where it came from.
+  const [minimized, setMinimized] = useState<MinimizedTerminal[]>([]);
+
+  // The dock (roster of all terminals) is hidden by default; the layout menu
+  // toggles it. Minimizing anything forces it visible so nothing gets stranded.
+  const [dockVisible, setDockVisible] = useState(false);
 
   // Preview width as a % of the workspace row (0 = hidden, 100 = full). The
   // divider drags this; the top-bar button toggles hidden ↔ last width.
@@ -189,8 +217,9 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
   // (the instanceId changes), tab close, project close, or split-collapse — its
   // server-side session would otherwise linger forever. Diff the live
   // instanceIds against the previous set on every tree change and kill whatever
-  // disappeared. Runs post-commit (no stale-state read), and starts empty so it
-  // never kills on first mount.
+  // disappeared. Minimized terminals count as live (minimize ≠ close). Runs
+  // post-commit (no stale-state read), and starts empty so it never kills on
+  // first mount.
   const liveInstancesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const live = new Set<string>();
@@ -199,11 +228,53 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
         if (tab) live.add(tab.instanceId);
       }
     }
+    for (const m of minimized) live.add(m.tab.instanceId);
     for (const id of liveInstancesRef.current) {
       if (!live.has(id)) terminalClient.kill(id);
     }
     liveInstancesRef.current = live;
-  }, [leaves]);
+    // Declare ownership of every live session so the server's detach reaper
+    // spares them even with no output subscriber (background tabs render no
+    // TerminalView; minimized ones aren't in the tree at all).
+    terminalClient.retain([...live]);
+  }, [leaves, minimized]);
+
+  // Leaving the workspace (Back → welcome screen) unmounts this component and
+  // with it the pane tree + dock state — nothing can restore those sessions
+  // anymore, so drop every retention or the reaper could never collect them
+  // and the terminal client would hold a reconnect loop open forever.
+  useEffect(() => () => terminalClient.retain([]), []);
+
+  // Which sessions the user can actually see — each pane's active tab, while
+  // the terminal grid is shown (desktop: preview not fullscreen; mobile: CLI
+  // view) and the pane isn't collapsed. Used to highlight the current terminal
+  // in the dock roster.
+  const visibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    const gridShown = isMobile ? mobileView === "cli" : previewPct < 100;
+    if (gridShown) {
+      for (const leaf of leaves) {
+        if (leaf.collapsed) continue;
+        const tab = leaf.tabs[Math.min(leaf.activeTabIndex, leaf.tabs.length - 1)];
+        if (tab) ids.add(tab.instanceId);
+      }
+    }
+    return ids;
+  }, [leaves, isMobile, mobileView, previewPct]);
+
+  // Every terminal in the workspace, for the dock roster: live tabs (with their
+  // location so a click can jump to them) first, then minimized ones.
+  const dockEntries = useMemo<DockEntry[]>(() => {
+    const list: DockEntry[] = [];
+    for (const leaf of leaves) {
+      leaf.tabs.forEach((t, i) => {
+        if (t)
+          list.push({ terminal: t, minimized: false, paneId: leaf.id, tabIndex: i });
+      });
+    }
+    for (const m of minimized) list.push({ terminal: m.tab, minimized: true });
+    return list;
+  }, [leaves, minimized]);
   // Compact composer typography when there are 2+ visible terminals
   // (panes with at least one tab).
   const totalTabs = useMemo(
@@ -261,6 +332,9 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
     if (openProjects.length <= 1) return;
     setOpenProjects((prev) => prev.filter((p) => p.id !== id));
     setPaneRoot((prev) => clearProject(prev, id));
+    // Closing a project also closes its minimized terminals — the live-set
+    // diff above then kills their PTYs like any other removed tab.
+    setMinimized((prev) => prev.filter((m) => m.tab.projectId !== id));
     if (activeProjectId === id) {
       const fallback = openProjects.find((p) => p.id !== id);
       if (fallback) setActiveProjectId(fallback.id);
@@ -325,6 +399,92 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
   const handleSelectTab = (paneId: PaneId, tabIndex: number) => {
     setPaneRoot((prev) => setActiveTab(prev, paneId, tabIndex));
     setFocusedPaneId(paneId);
+  };
+
+  // Collapse a pane to its header bar in place (or expand it back). The leaf
+  // stays in the tree, so expanding restores the exact layout.
+  const handleToggleCollapse = (paneId: PaneId) => {
+    const leaf = findLeaf(paneRoot, paneId);
+    if (!leaf) return;
+    setPaneRoot((prev) => setCollapsed(prev, paneId, !leaf.collapsed));
+    setFocusedPaneId(paneId);
+  };
+
+  // Dock clicked a live terminal — surface it: select its tab, focus its pane,
+  // expand the pane if collapsed, and drop the cursor in its composer so you
+  // can type straight away.
+  const handleFocusTerminal = (paneId: PaneId, tabIndex: number) => {
+    const tab = findLeaf(paneRoot, paneId)?.tabs[tabIndex];
+    setPaneRoot((prev) =>
+      setActiveTab(setCollapsed(prev, paneId, false), paneId, tabIndex),
+    );
+    setFocusedPaneId(paneId);
+    if (tab) requestComposerFocus(tab.instanceId);
+  };
+
+  // Collapse a tab out of the tree into the dock. Both state updates land in
+  // one batch, so the live-set diff sees the terminal move (not vanish) and
+  // never kills its PTY.
+  const handleMinimizeTab = (paneId: PaneId, tabIndex: number) => {
+    const tab = findLeaf(paneRoot, paneId)?.tabs[tabIndex];
+    if (!tab) return; // unassigned slots have nothing to keep alive
+    setMinimized((prev) => [...prev, { tab, origin: { paneId, tabIndex } }]);
+    handleCloseTab(paneId, tabIndex);
+  };
+
+  // Dock chip clicked — re-open the terminal in the pane and slot it was
+  // minimized from. If that pane has since collapsed out of the tree, fall
+  // back to the focused pane (or the first leaf) and append.
+  const handleRestoreTerminal = (instanceId: string) => {
+    const entry = minimized.find((m) => m.tab.instanceId === instanceId);
+    if (!entry) return;
+    setMinimized((prev) =>
+      prev.filter((m) => m.tab.instanceId !== instanceId),
+    );
+    if (findLeaf(paneRoot, entry.origin.paneId)) {
+      // Expand the origin pane too — if it was collapsed since the minimize,
+      // the restored (now-active) tab would otherwise land hidden behind the
+      // header bar.
+      setPaneRoot((prev) =>
+        setCollapsed(
+          insertTab(prev, entry.origin.paneId, entry.origin.tabIndex, entry.tab),
+          entry.origin.paneId,
+          false,
+        ),
+      );
+      setFocusedPaneId(entry.origin.paneId);
+      requestComposerFocus(instanceId);
+      return;
+    }
+    const targetId = leaves.some((l) => l.id === focusedPaneId)
+      ? focusedPaneId
+      : leaves[0]!.id;
+    setPaneRoot((prev) => addTab(prev, targetId, entry.tab).tree);
+    setFocusedPaneId(targetId);
+    requestComposerFocus(instanceId);
+  };
+
+  // Dock chip's × — drop it from the dock; the live-set diff kills the PTY.
+  const handleCloseMinimized = (instanceId: string) => {
+    setMinimized((prev) => prev.filter((m) => m.tab.instanceId !== instanceId));
+  };
+
+  // Drag & drop between/within panes. moveTab returns the original tree for
+  // every no-op (including a vanished target), so the === check covers all
+  // "nothing happened" cases and focus only follows real moves.
+  const handleMoveTab = (
+    from: { paneId: PaneId; tabIndex: number },
+    to: { paneId: PaneId; tabIndex?: number },
+  ) => {
+    const next = moveTab(paneRoot, from, to);
+    if (next === paneRoot) return;
+    // A cross-pane move makes the tab the target's active tab; if that pane is
+    // collapsed it'd land hidden, so surface it. A same-pane reorder keeps the
+    // existing active tab, so it needn't force-expand.
+    setPaneRoot(
+      from.paneId === to.paneId ? next : setCollapsed(next, to.paneId, false),
+    );
+    setFocusedPaneId(to.paneId);
   };
 
   /* --- preview divider drag-to-resize --- */
@@ -431,6 +591,28 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
   const activeProjectPath =
     (openProjects.find((p) => p.id === activeProjectId) ?? project).path;
 
+  // Shared by both shells — the dock roster under the terminal grid. Hidden by
+  // default (layout-menu toggle), but forced visible while anything is
+  // minimized so a minimized terminal is never stranded off-screen.
+  const dockShown = dockVisible || minimized.length > 0;
+  const dock = (
+    <TerminalDock
+      entries={dockEntries}
+      projectsById={projectsById}
+      openProjects={openProjects}
+      visibleIds={visibleIds}
+      onActivate={(entry) => {
+        if (entry.minimized) {
+          handleRestoreTerminal(entry.terminal.instanceId);
+        } else if (entry.paneId != null && entry.tabIndex != null) {
+          handleFocusTerminal(entry.paneId, entry.tabIndex);
+        }
+      }}
+      onCloseMinimized={handleCloseMinimized}
+      onDropTerminal={(from) => handleMinimizeTab(from.paneId, from.tabIndex)}
+    />
+  );
+
   // Shared by both shells — the five workspace-tool overlays.
   const toolModals = (
     <>
@@ -462,23 +644,31 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
         >
           {/* All views stay mounted (hidden, not unmounted) so switching never
               kills the PTY, reloads the iframe, or drops editor state. */}
-          <div className={`min-h-0 flex-1 ${mobileView === "cli" ? "" : "hidden"}`}>
-            <TerminalSplits
-              root={paneRoot}
-              projectsById={projectsById}
-              openProjects={openProjects}
-              activeProjectId={activeProjectId}
-              focusedId={focusedPaneId}
-              allowClose={allowClose}
-              compact={compact}
-              mobile
-              onFocus={setFocusedPaneId}
-              onPickForTab={handlePickForTab}
-              onCloseTab={handleCloseTab}
-              onSelectTab={handleSelectTab}
-              onSplit={handleSplit}
-              onExit={onBack}
-            />
+          <div
+            className={`min-h-0 flex-1 ${mobileView === "cli" ? "flex flex-col" : "hidden"}`}
+          >
+            <div className="min-h-0 flex-1">
+              <TerminalSplits
+                root={paneRoot}
+                projectsById={projectsById}
+                openProjects={openProjects}
+                activeProjectId={activeProjectId}
+                focusedId={focusedPaneId}
+                allowClose={allowClose}
+                compact={compact}
+                mobile
+                onFocus={setFocusedPaneId}
+                onPickForTab={handlePickForTab}
+                onCloseTab={handleCloseTab}
+                onSelectTab={handleSelectTab}
+                onSplit={handleSplit}
+                onMinimizeTab={handleMinimizeTab}
+                onToggleCollapse={handleToggleCollapse}
+                onMoveTab={handleMoveTab}
+                onExit={onBack}
+              />
+            </div>
+            {dockShown && dock}
           </div>
           <div className={`min-h-0 flex-1 ${mobileView === "cli" ? "hidden" : ""}`}>
             <SidePane
@@ -515,30 +705,38 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
         onSetPreviewSize={setPreviewSize}
         termOpen={termOpen}
         onToggleTerminal={toggleTerminal}
+        dockVisible={dockVisible}
+        onToggleDock={() => setDockVisible((v) => !v)}
         onBack={onBack}
         onOpenTool={setOpenTool}
       />
 
       <main ref={mainRef} className="flex min-h-0 flex-1 px-3 pb-3">
         <div
-          className={`min-w-0 ${paneTransition}`}
+          className={`flex min-w-0 flex-col ${paneTransition}`}
           style={{ flex: `1 1 ${100 - previewPct}%` }}
         >
-          <TerminalSplits
-            root={paneRoot}
-            projectsById={projectsById}
-            openProjects={openProjects}
-            activeProjectId={activeProjectId}
-            focusedId={focusedPaneId}
-            allowClose={allowClose}
-            compact={compact}
-            onFocus={setFocusedPaneId}
-            onPickForTab={handlePickForTab}
-            onCloseTab={handleCloseTab}
-            onSelectTab={handleSelectTab}
-            onSplit={handleSplit}
-            onExit={onBack}
-          />
+          <div className="min-h-0 flex-1">
+            <TerminalSplits
+              root={paneRoot}
+              projectsById={projectsById}
+              openProjects={openProjects}
+              activeProjectId={activeProjectId}
+              focusedId={focusedPaneId}
+              allowClose={allowClose}
+              compact={compact}
+              onFocus={setFocusedPaneId}
+              onPickForTab={handlePickForTab}
+              onCloseTab={handleCloseTab}
+              onSelectTab={handleSelectTab}
+              onSplit={handleSplit}
+              onMinimizeTab={handleMinimizeTab}
+              onToggleCollapse={handleToggleCollapse}
+              onMoveTab={handleMoveTab}
+              onExit={onBack}
+            />
+          </div>
+          {dockShown && dock}
         </div>
 
         <PaneResizer

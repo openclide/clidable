@@ -24,6 +24,10 @@ export interface LeafPane {
   id: PaneId;
   tabs: (TileTerminal | null)[];
   activeTabIndex: number;
+  /** Collapsed in place: the leaf shrinks to just its header bar and its
+   *  split sibling grows to fill. The leaf stays in the tree at its slot, so
+   *  expanding restores the exact layout. */
+  collapsed?: boolean;
 }
 
 export interface SplitPane {
@@ -177,6 +181,26 @@ export function setTab(
 }
 
 /**
+ * Insert a tab into a leaf at a specific index (clamped to the current
+ * length) and make it active. Unlike `addTab`, which always appends, this
+ * preserves position — used to restore a minimized terminal to the slot it
+ * was minimized from.
+ */
+export function insertTab(
+  root: Pane,
+  paneId: PaneId,
+  tabIndex: number,
+  tab: TileTerminal,
+): Pane {
+  return mapLeaf(root, paneId, (leaf) => {
+    const insertAt = Math.min(Math.max(0, tabIndex), leaf.tabs.length);
+    const tabs = leaf.tabs.slice();
+    tabs.splice(insertAt, 0, tab);
+    return { ...leaf, tabs, activeTabIndex: insertAt };
+  });
+}
+
+/**
  * Remove a tab. If the leaf ends up with zero tabs AND is not the only
  * leaf in the tree, the leaf itself is removed (parent collapses).
  */
@@ -206,6 +230,60 @@ export function removeTab(
   return next;
 }
 
+/**
+ * Move a tab — reorder within a leaf or transfer to another leaf (drag &
+ * drop). `to.tabIndex` is the insert-before position; omit it to append.
+ *
+ * - Same-leaf reorders keep the previously-active tab active.
+ * - Cross-leaf moves make the moved tab the target's active tab, and the
+ *   source leaf collapses if it ends up empty (same rule as removeTab).
+ * - Unassigned (null) slots don't move; no-ops return the original tree.
+ * - If the target leaf doesn't exist, the original tree is returned — a
+ *   move must never lose a terminal.
+ */
+export function moveTab(
+  root: Pane,
+  from: { paneId: PaneId; tabIndex: number },
+  to: { paneId: PaneId; tabIndex?: number },
+): Pane {
+  const source = findLeaf(root, from.paneId);
+  if (!source) return root;
+  const tab = source.tabs[from.tabIndex];
+  if (tab === undefined || tab === null) return root;
+
+  if (from.paneId === to.paneId) {
+    const len = source.tabs.length;
+    let insertAt = Math.min(to.tabIndex ?? len, len);
+    // Removing the tab first shifts later positions down one.
+    if (from.tabIndex < insertAt) insertAt--;
+    if (insertAt === from.tabIndex) return root;
+    return mapLeaf(root, from.paneId, (leaf) => {
+      const tabs = leaf.tabs.slice();
+      tabs.splice(from.tabIndex, 1);
+      tabs.splice(insertAt, 0, tab);
+      let active = leaf.activeTabIndex;
+      if (active === from.tabIndex) {
+        active = insertAt;
+      } else {
+        if (active > from.tabIndex) active--;
+        if (active >= insertAt) active++;
+      }
+      return { ...leaf, tabs, activeTabIndex: active };
+    });
+  }
+
+  // Cross-leaf: remove from the source (collapsing it if emptied), then
+  // insert into the target on the NEW tree.
+  const removed = removeTab(root, from.paneId, from.tabIndex);
+  if (!findLeaf(removed, to.paneId)) return root;
+  return mapLeaf(removed, to.paneId, (leaf) => {
+    const insertAt = Math.min(to.tabIndex ?? leaf.tabs.length, leaf.tabs.length);
+    const tabs = leaf.tabs.slice();
+    tabs.splice(insertAt, 0, tab);
+    return { ...leaf, tabs, activeTabIndex: insertAt };
+  });
+}
+
 export function setActiveTab(
   root: Pane,
   paneId: PaneId,
@@ -215,6 +293,15 @@ export function setActiveTab(
     ...leaf,
     activeTabIndex: tabIndex,
   }));
+}
+
+/** Collapse or expand a leaf in place (see LeafPane.collapsed). */
+export function setCollapsed(
+  root: Pane,
+  paneId: PaneId,
+  collapsed: boolean,
+): Pane {
+  return mapLeaf(root, paneId, (leaf) => ({ ...leaf, collapsed }));
 }
 
 /**
