@@ -1,18 +1,38 @@
 import { useState } from "react";
 import { AGENTS, type AgentId } from "../../welcome/data";
 import { AgentIcon } from "../../icons/AgentIcon";
-import type { SkillScope } from "./data";
+import type { SkillScope } from "@shared/types";
 
 /**
- * Mock "Add custom" form. No-op on submit — the real install flow lands
- * when Skills are wired to the `skills` library (PLAN.md §4).
+ * "Add custom" skill form. Collects a source (owner/repo, URL, or local path),
+ * which agents to install for, and the scope, then hands them to the modal's
+ * install flow (→ /api/skills/add). The skill name is derived from the source's
+ * last path segment.
  */
-export function AddCustomForm() {
+export function AddCustomForm({
+  onInstall,
+  busy,
+  disabled = false,
+}: {
+  /** Install the source for the picked agents/scope; resolves true on success
+   *  (the form clears its source field then). */
+  onInstall: (args: {
+    source: string;
+    agents: AgentId[];
+    scope: SkillScope;
+  }) => Promise<boolean>;
+  busy: boolean;
+  /** No active project → nothing to install into. */
+  disabled?: boolean;
+}) {
   const [source, setSource] = useState("");
   const [selectedAgents, setSelectedAgents] = useState<Set<AgentId>>(
     new Set<AgentId>(["claude"]),
   );
   const [scope, setScope] = useState<SkillScope>("project");
+
+  const canSubmit =
+    !disabled && !busy && source.trim().length > 0 && selectedAgents.size > 0;
 
   const toggleAgent = (id: AgentId) => {
     setSelectedAgents((prev) => {
@@ -25,22 +45,28 @@ export function AddCustomForm() {
 
   return (
     <form
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        // mock no-op
+        if (!canSubmit) return;
+        const ok = await onInstall({
+          source: source.trim(),
+          agents: [...selectedAgents],
+          scope,
+        });
+        if (ok) setSource("");
       }}
       className="flex flex-col gap-5"
     >
       {/* Source input */}
       <Field
         label="Source"
-        hint="GitHub shorthand (owner/repo), full URL, or absolute local path."
+        hint="A single skill: owner/repo, a repo subpath, or a local skill folder. The name is the last path segment."
       >
         <input
           type="text"
           value={source}
           onChange={(e) => setSource(e.target.value)}
-          placeholder="vercel-labs/agent-skills  ·  or  ·  ~/my-skill"
+          placeholder="owner/my-skill  ·  or  ·  ~/skills/my-skill"
           className="
             w-full rounded-xl
             border border-white/[0.08] bg-white/[0.03]
@@ -93,10 +119,10 @@ export function AddCustomForm() {
       {/* Scope */}
       <Field
         label="Scope"
-        hint="User: available in every project. Project: only this project."
+        hint="Global: available in every project. Project: only this one."
       >
         <div className="flex gap-1.5">
-          {(["user", "project"] as const).map((s) => (
+          {(["global", "project"] as const).map((s) => (
             <button
               key={s}
               type="button"
@@ -122,11 +148,13 @@ export function AddCustomForm() {
       {/* Submit */}
       <div className="mt-1 flex items-center justify-end gap-3">
         <span className="text-[11px] text-foreground/35">
-          Real install via `clidable skills add` once wired up.
+          {disabled
+            ? "Open a project to install skills."
+            : "Installs via the skills CLI into the selected agents."}
         </span>
         <button
           type="submit"
-          disabled={source.trim().length === 0 || selectedAgents.size === 0}
+          disabled={!canSubmit}
           className="
             rounded-lg
             border border-white/[0.12] bg-white/[0.06]
@@ -138,7 +166,7 @@ export function AddCustomForm() {
             disabled:hover:border-white/[0.12] disabled:hover:bg-white/[0.06]
           "
         >
-          Install skill
+          {busy ? "Installing…" : "Install skill"}
         </button>
       </div>
     </form>

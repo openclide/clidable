@@ -15,6 +15,7 @@ import {
   type DiscoverSkill,
   type InstalledSkill,
 } from "./data";
+import type { AgentId } from "../../welcome/data";
 import {
   bucketsForAgents,
   hasSkillSource,
@@ -188,13 +189,15 @@ export function SkillsModal({ open, onClose, projectPath }: Props) {
   const runMutation = async (
     key: string,
     fn: () => Promise<unknown>,
-  ): Promise<void> => {
-    if (!projectPath || busyKey) return;
+  ): Promise<boolean> => {
+    if (!projectPath || busyKey) return false;
     setBusyKey(key);
     setMutError(null);
+    let ok = true;
     try {
       await fn();
     } catch (e) {
+      ok = false;
       setMutError((e as Error).message);
     } finally {
       // Always refresh from disk — even on error a multi-step apply may have
@@ -206,6 +209,7 @@ export function SkillsModal({ open, onClose, projectPath }: Props) {
       }
       setBusyKey(null);
     }
+    return ok;
   };
 
   // One-click install from a Discover card → project scope, all buckets.
@@ -241,6 +245,28 @@ export function SkillsModal({ open, onClose, projectPath }: Props) {
         await removeSkill({ projectPath: projectPath!, name: s.id, scope, bucket });
       }
     });
+
+  // Custom install (the "Add custom" tab): derive the skill's folder name from
+  // the source's last path segment, map picked agents → buckets, then land on
+  // the Installed list so the result is visible.
+  const installCustom = async (args: {
+    source: string;
+    agents: AgentId[];
+    scope: SkillScope;
+  }): Promise<boolean> => {
+    if (!projectPath) return false;
+    const ok = await runMutation("custom:install", () =>
+      installSkill({
+        projectPath,
+        source: args.source,
+        skillId: deriveSkillId(args.source),
+        scope: args.scope,
+        buckets: bucketsForAgents(args.agents),
+      }),
+    );
+    if (ok) setTab("installed");
+    return ok;
+  };
 
   const openSkill = (
     id: string,
@@ -372,7 +398,13 @@ export function SkillsModal({ open, onClose, projectPath }: Props) {
                 onPickSuggestion={setQuery}
               />
             )}
-            {tab === "custom" && <AddCustomForm />}
+            {tab === "custom" && (
+              <AddCustomForm
+                onInstall={installCustom}
+                busy={busyKey === "custom:install"}
+                disabled={!projectPath}
+              />
+            )}
           </div>
         </>
       )}
@@ -744,6 +776,14 @@ function MutationError({
       </button>
     </div>
   );
+}
+
+/** The skill folder name for a custom source = its last path segment (trailing
+ *  slash and a `.git` suffix stripped): `owner/repo` → `repo`, `~/skills/foo` →
+ *  `foo`. For a multi-skill repo, point the source at the specific skill. */
+function deriveSkillId(source: string): string {
+  const cleaned = source.trim().replace(/[/\\]+$/, "").replace(/\.git$/i, "");
+  return cleaned.split(/[/\\]/).pop() || cleaned;
 }
 
 function useFiltered<T extends { name: string; description: string }>(
