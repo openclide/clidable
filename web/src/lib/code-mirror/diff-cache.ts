@@ -15,7 +15,6 @@
  * Source variants:
  *   • working    — diff working tree against the project's real-git HEAD
  *   • checkpoint — diff working tree against a shadow-repo checkpoint SHA
- *   • commit     — reserved for commit-vs-commit (not wired yet)
  */
 
 export interface DiffContent {
@@ -39,12 +38,6 @@ export type DiffSource =
       /** Shadow-repo commit SHA to compare the working tree against. */
       sha: string;
       path: string;
-    }
-  | {
-      kind: "commit";
-      root: string;
-      sha: string;
-      path: string;
     };
 
 const DIFF_CACHE_LIMIT = 6;
@@ -57,8 +50,6 @@ export function diffKey(source: DiffSource): string {
       return `w|${source.root}|${source.path}`;
     case "checkpoint":
       return `k|${source.root}|${source.sha}|${source.path}`;
-    case "commit":
-      return `c|${source.root}|${source.sha}|${source.path}`;
   }
 }
 
@@ -114,10 +105,6 @@ export async function fetchDiff(source: DiffSource): Promise<DiffContent> {
 }
 
 async function doFetch(source: DiffSource): Promise<DiffContent> {
-  if (source.kind === "commit") {
-    // Commit-vs-commit isn't wired on the server yet.
-    throw new Error("Diff source kind 'commit' is not implemented yet");
-  }
   const qs = new URLSearchParams({ root: source.root, path: source.path });
   if (source.kind === "checkpoint") {
     qs.set("checkpointSha", source.sha);
