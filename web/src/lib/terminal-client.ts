@@ -7,6 +7,7 @@
  * backoff on disconnect — subscribers stay registered and resubscribe
  * automatically once the socket reconnects.
  */
+import { clearLocalAgentStatus, setLocalAgentStatus } from "./agent-status";
 import {
   TERMINAL_FRAME_KIND_INPUT,
   TERMINAL_FRAME_KIND_OUTPUT,
@@ -289,6 +290,17 @@ class TerminalClient {
     if (msg.type === "exit") {
       const entry = this.subscribers.get(msg.id);
       entry?.callbacks.onExit?.(msg.code, msg.signal);
+      clearLocalAgentStatus(msg.id); // dead session has no status
+      return;
+    }
+    if (msg.type === "status") {
+      // Applied to the global store (not a per-view callback) so the dot shows
+      // for terminals you're not looking at — background tabs and the dock — not
+      // just the mounted one. A null state clears it (the session exited); this
+      // is how a retained-only terminal, which gets no `exit` message, drops its
+      // stale dot.
+      if (msg.state === null) clearLocalAgentStatus(msg.id);
+      else setLocalAgentStatus(msg.id, msg.state);
       return;
     }
     if (msg.type === "error") {

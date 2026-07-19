@@ -46,6 +46,18 @@ export function nextPaneId(): PaneId {
   return `pane-${_id}`;
 }
 
+/**
+ * After hydrating a persisted tree, advance the id counter past every pane id it
+ * already uses, so a subsequently-minted `nextPaneId()` can't collide with a
+ * hydrated pane (they share the `pane-<n>` space).
+ */
+export function reservePaneIds(root: Pane): void {
+  for (const leaf of allLeaves(root)) {
+    const m = /^pane-(\d+)$/.exec(leaf.id);
+    if (m) _id = Math.max(_id, Number(m[1]));
+  }
+}
+
 export function allLeaves(root: Pane): LeafPane[] {
   if (root.kind === "leaf") return [root];
   return [...allLeaves(root.first), ...allLeaves(root.second)];

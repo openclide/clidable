@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AgentIcon } from "../icons/AgentIcon";
+import { AgentStatusIcon } from "./AgentStatusIcon";
 import { getAgent, shortAgentName, type MockProject } from "../welcome/data";
 import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
 import {
@@ -111,7 +111,12 @@ export function TerminalDock({
               size={15}
               tinted={dupInitials.has(projectName.charAt(0).toUpperCase())}
             />
-            <AgentIcon id={t.agentId} size={12} className="shrink-0 opacity-90" />
+            <AgentStatusIcon
+              instanceId={t.instanceId}
+              agentId={t.agentId}
+              size={12}
+              className="shrink-0 opacity-90"
+            />
             <span className="truncate">{shortAgentName(agent.name)}</span>
             {entry.minimized && (
               <span

@@ -40,7 +40,11 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     id: "codex",
     name: "Codex CLI",
     bin: "codex",
-    args: [],
+    // Codex gates hooks behind a per-source "hook trust" prompt; without this
+    // our installed session-id hook is silently skipped (no capture → no
+    // resume). The flag runs the hooks Clidable itself installed — the
+    // documented "automation that already vets its hook sources" case.
+    args: ["--dangerously-bypass-hook-trust"],
     env: {},
     installHint: "npm i -g @openai/codex",
   },

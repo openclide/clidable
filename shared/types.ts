@@ -83,7 +83,12 @@ export type TerminalServerMessage =
       replayLength: number;
     }
   | { type: "exit"; id: string; code: number; signal: string | null }
+  | { type: "status"; id: string; state: TerminalAgentState | null }
   | { type: "error"; id?: string; code: string; message: string };
+
+/** Coarse per-agent lifecycle state, derived from the agent's own hooks
+ *  (working / idle / blocked). Drives the live status indicator. */
+export type TerminalAgentState = "working" | "idle" | "blocked";
 
 /**
  * Fixed-width session id used in binary frame headers. 64 ASCII bytes

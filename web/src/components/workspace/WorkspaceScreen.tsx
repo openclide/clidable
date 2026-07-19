@@ -20,6 +20,7 @@ import {
   moveTab,
   nextPaneId,
   removeTab,
+  reservePaneIds,
   setActiveTab,
   setCollapsed,
   setTab,
@@ -29,6 +30,7 @@ import {
   type TileTerminal,
 } from "./paneTree";
 import { TerminalDock, type DockEntry } from "./TerminalDock";
+import { fetchLayout, saveLayout as saveLayoutToServer } from "../../lib/layout";
 import type { AgentId, MockProject } from "../welcome/data";
 import type { WorkspaceTool } from "./WorkspaceTools";
 import { subscribeRevealChanges } from "../../lib/diff-base-store";
@@ -137,6 +139,43 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
   const [focusedPaneId, setFocusedPaneId] = useState<PaneId>(
     () => allLeaves(paneRoot)[0]!.id,
   );
+
+  // Persist the pane tree server-side so a reload (or a second client) restores
+  // the same terminals/splits instead of re-seeding a single terminal — the
+  // instanceIds are reused, so live sessions re-attach and dead ones resume.
+  // `hydratedRef` gates saving until the load has run, so the initial default
+  // can't overwrite a saved layout before it arrives.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    hydratedRef.current = false;
+    let cancelled = false;
+    void fetchLayout(project.id).then((tree) => {
+      if (cancelled) return;
+      if (tree) {
+        try {
+          // reservePaneIds walks the whole tree, so it doubles as a structural
+          // check: a malformed subtree throws here and we keep the default
+          // layout rather than crashing the render.
+          reservePaneIds(tree); // advance the id counter past hydrated pane ids
+          setPaneRoot(tree);
+          const first = allLeaves(tree)[0];
+          if (first) setFocusedPaneId(first.id);
+        } catch {
+          // corrupt / foreign saved tree — fall back to the seeded default
+        }
+      }
+      hydratedRef.current = true;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const t = setTimeout(() => void saveLayoutToServer(project.id, paneRoot), 500);
+    return () => clearTimeout(t);
+  }, [paneRoot, project.id]);
 
   // Terminals collapsed out of the pane tree into the dock strip. Their PTY
   // sessions keep running server-side (the retain protocol below exempts
@@ -283,8 +322,13 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
   );
   const compact = totalTabs > 1;
 
+  // Persisted long-term (the layout is saved server-side), so the suffix adds a
+  // short random tail to Date.now() — two terminals opened in the same
+  // millisecond can't collide on the id that keys the PTY session + record.
   const makeInstanceId = (projectId: string, aid: AgentId) =>
-    `${projectId}-${aid}-${Date.now().toString(36)}`;
+    `${projectId}-${aid}-${Date.now().toString(36)}${Math.floor(Math.random() * 1296)
+      .toString(36)
+      .padStart(2, "0")}`;
 
   const handleAddProject = (next: MockProject) => {
     if (openProjects.some((p) => p.id === next.id)) {

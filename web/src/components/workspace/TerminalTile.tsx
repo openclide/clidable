@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { TerminalView } from "./TerminalView";
 import { Composer } from "./Composer";
 import { AgentIcon } from "../icons/AgentIcon";
+import { AgentStatusIcon } from "./AgentStatusIcon";
 import {
   AGENTS,
   getAgent,
@@ -329,7 +330,12 @@ function TabChip({
           {projectName && (
             <ProjectBadge name={projectName} size={15} tinted={projectTinted} />
           )}
-          <AgentIcon id={tab.agentId} size={12} className="shrink-0 opacity-90" />
+          <AgentStatusIcon
+            instanceId={tab.instanceId}
+            agentId={tab.agentId}
+            size={12}
+            className="opacity-90"
+          />
           <span className="truncate">{agentName}</span>
         </>
       ) : (

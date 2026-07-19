@@ -28,6 +28,41 @@ const MIGRATIONS: string[] = [
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- Durable sessions. A terminal is a persisted RECORD (this table) distinct
+  -- from its ephemeral PTY RUNTIME (in-memory SessionManager) — so a session
+  -- survives reload/restart/crash and looks identical from any client. The id
+  -- column is the ULID that replaces the old time-based instanceId.
+  --   • agent_ref — JSON {kind:'id'|'path', value} captured from the agent's own
+  --     SessionStart hook; drives agent-native resume (claude --resume …). NULL
+  --     until the hook reports, or for agents with no resume support.
+  --   • dormant — 1 once the PTY process has been reaped but the record is kept
+  --     for lazy resume (decouples "process alive" from "terminal exists").
+  -- Scrollback is NOT here — it lives as a per-terminal .scroll file under the
+  -- project data dir (bytes, atomic+debounced), replayed on attach.
+  CREATE TABLE IF NOT EXISTS terminals (
+    id            TEXT PRIMARY KEY,        -- ULID (replaces instanceId)
+    project_uuid  TEXT NOT NULL,
+    agent_id      TEXT NOT NULL,           -- 'claude' | 'codex' | ...
+    cwd           TEXT NOT NULL,
+    agent_ref     TEXT,                    -- JSON {kind,value} | NULL
+    title         TEXT,
+    created_at    INTEGER NOT NULL,        -- ms since epoch
+    last_active   INTEGER NOT NULL,
+    dormant       INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE INDEX IF NOT EXISTS terminals_project
+    ON terminals (project_uuid, last_active DESC);
+
+  -- One row per project: the server-authoritative pane tree (stable terminal
+  -- ids, per-leaf zoomed/collapsed bits, minimized set) as a JSON blob, so web
+  -- and the Mac app render the same layout and a restart rehydrates it.
+  CREATE TABLE IF NOT EXISTS workspace_layout (
+    project_uuid  TEXT PRIMARY KEY,
+    tree          TEXT NOT NULL,           -- JSON pane tree
+    updated_at    INTEGER NOT NULL
+  );
   `,
 
   // 1 → 2: checkpoints table. One row per composer Send, even when the

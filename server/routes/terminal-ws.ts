@@ -14,6 +14,7 @@
 import type { ServerWebSocket } from "bun";
 import { sessionManager } from "../pty/manager";
 import { type Session, type SessionSubscriber } from "../pty/session";
+import { getAgentStatus, onAgentStatus } from "../pty/agent-status";
 import {
   TERMINAL_FRAME_KIND_INPUT,
   TERMINAL_FRAME_KIND_OUTPUT,
@@ -31,12 +32,32 @@ interface TerminalSocketData {
   retained: Set<string>;
 }
 
+// Every open terminal socket, so a status change can be fanned out to whichever
+// connections are subscribed to the affected session.
+const terminalSockets = new Set<ServerWebSocket<TerminalSocketData>>();
+
+// Registered once: push each status change to every socket that cares about
+// that id — whether it's actively subscribed (visible) OR merely retained
+// (a background tab / minimized terminal). The latter is what lets the dock and
+// off-screen tab chips show a live status dot without being rendered.
+onAgentStatus((id, state) => {
+  for (const ws of terminalSockets) {
+    if (
+      ws.readyState === 1 /* OPEN */ &&
+      (ws.data.subs.has(id) || ws.data.retained.has(id))
+    ) {
+      sendServer(ws, { type: "status", id, state });
+    }
+  }
+});
+
 export const terminalWebSocketHandler = {
   open(ws: ServerWebSocket<TerminalSocketData>) {
     ws.data = {
       subs: new Map(),
       retained: new Set(),
     };
+    terminalSockets.add(ws);
   },
 
   async message(
@@ -76,6 +97,7 @@ export const terminalWebSocketHandler = {
       sessionManager.get(id)?.release(ws);
     }
     ws.data.retained.clear();
+    terminalSockets.delete(ws);
   },
 
   // Backpressure: pause-resume support could go here later.
@@ -119,6 +141,10 @@ async function handleControl(
       if (session.replayLength > 0) {
         sendOutputFrame(ws, session.id, session.getReplay());
       }
+      // Snapshot the current live status so a (re)attaching client shows the
+      // right dot immediately, without waiting for the next transition.
+      const status = getAgentStatus(session.id);
+      if (status) sendServer(ws, { type: "status", id: session.id, state: status });
     } catch (err) {
       const e = err as Error & { code?: string };
       sendServer(ws, {
@@ -157,15 +183,23 @@ async function handleControl(
   }
 
   if (msg.type === "retain") {
+    const prev = ws.data.retained;
     const next = new Set(msg.ids);
     // Release sessions this client no longer claims…
-    for (const id of ws.data.retained) {
+    for (const id of prev) {
       if (!next.has(id)) sessionManager.get(id)?.release(ws);
     }
     // …and pin every claimed one (idempotent; ids without a live session
     // stay in the set and get pinned when their `open` completes).
     for (const id of next) {
       sessionManager.get(id)?.retain(ws);
+      // Snapshot the current status for a newly-retained (e.g. minimized)
+      // terminal, so its dock dot is right immediately — not only after the
+      // next live transition.
+      if (!prev.has(id)) {
+        const status = getAgentStatus(id);
+        if (status) sendServer(ws, { type: "status", id, state: status });
+      }
     }
     ws.data.retained = next;
     return;

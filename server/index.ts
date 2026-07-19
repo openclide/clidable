@@ -17,7 +17,9 @@ import { parseConfig } from "./cli";
 import { ensureDirs, paths } from "./paths";
 import { ensureClidableShim } from "./cli-shim";
 import { openDb } from "./db";
+import { setReportPort } from "./pty/hook-report";
 import { agentsHandler } from "./routes/agents";
+import { agentHookHandler } from "./routes/agent-hook";
 import { attachmentUploadHandler } from "./routes/attachments";
 import {
   checkpointScreenshotHandler,
@@ -37,6 +39,7 @@ import {
   contextStarterHandler,
 } from "./routes/context";
 import { gitDiffHandler, gitStatusHandler } from "./routes/git";
+import { layoutGetHandler, layoutSaveHandler } from "./routes/layout";
 import { healthHandler } from "./routes/health";
 import {
   mcpAddHandler,
@@ -142,6 +145,7 @@ try {
 ensureDirs();
 openDb(); // run migrations on start
 await ensureClidableShim(); // make `clidable …` resolvable inside spawned agents
+setReportPort(config.port); // where spawned-agent hooks report their session id
 
 /**
  * Discriminated union of every shape we attach to a ServerWebSocket.
@@ -228,6 +232,7 @@ const server = serve({
     "/home": landing,
     "/api/health": { GET: healthHandler },
     "/api/agents": { GET: agentsHandler },
+    "/api/agent-hook": { POST: agentHookHandler },
     "/api/projects": {
       GET: projectsListHandler,
       POST: projectsOpenHandler,
@@ -238,6 +243,7 @@ const server = serve({
     "/api/projects/dev-server": { GET: projectDevStatusHandler },
     "/api/projects/dev-server/start": { POST: projectDevStartHandler },
     "/api/projects/dev-server/stop": { POST: projectDevStopHandler },
+    "/api/projects/layout": { GET: layoutGetHandler, PUT: layoutSaveHandler },
     "/api/attachments": { POST: attachmentUploadHandler },
     "/api/fs/list": { GET: fsListHandler },
     "/api/fs/browse": { GET: fsBrowseHandler },

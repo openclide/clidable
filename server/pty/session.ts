@@ -12,7 +12,16 @@ import { resolve } from "node:path";
 import { detectAgent, getAgentSpec } from "../agents";
 import { pathWithClidableBin } from "../cli-shim";
 import { clearTerminal, recordOutput } from "../preview/detector";
+import { markDormant, setAgentRef, upsertTerminal } from "./terminal-store";
+import { hookReportUrl } from "./hook-report";
+import { ensureHookInstalled } from "./agent-hooks";
+import { clearAgentStatus } from "./agent-status";
 import type { TerminalAgentId } from "../../shared/types";
+
+// A resume-launched session (argsOverride set) that dies this fast almost
+// certainly failed to resume — a stale/deleted agent ref. Clear the ref so the
+// next open spawns a fresh session instead of looping on the same broken resume.
+const RESUME_FAILFAST_MS = 6000;
 
 export interface SessionSubscriber {
   /** Called for each chunk emitted while subscribed. */
@@ -58,15 +67,33 @@ export class Session {
   private exited = false;
   private exitCode: number | null = null;
   private exitSignal: string | null = null;
+  // Project UUID this session belongs to (null → not persisted). Drives the
+  // durable terminal record + disk scrollback; best-effort, never blocks I/O.
+  private readonly projectUuid: string | null;
+  // When set, launch argv used INSTEAD of the agent's default args — this is how
+  // a resume works (e.g. ["--resume", "<id>"] for a session with a known ref).
+  private readonly argsOverride: string[] | null;
+  // ms timestamp of the spawn, for the resume fail-fast check on exit.
+  private spawnedAt = 0;
 
-  constructor(opts: SessionSpawnOptions) {
+  constructor(
+    opts: SessionSpawnOptions,
+    projectUuid: string | null = null,
+    argsOverride: string[] | null = null,
+  ) {
     this.id = opts.id;
     this.agent = opts.agent;
     this.projectPath = opts.projectPath;
+    this.projectUuid = projectUuid;
+    this.argsOverride = argsOverride;
   }
 
-  static async create(opts: SessionSpawnOptions): Promise<Session> {
-    const session = new Session(opts);
+  static async create(
+    opts: SessionSpawnOptions,
+    projectUuid: string | null = null,
+    argsOverride: string[] | null = null,
+  ): Promise<Session> {
+    const session = new Session(opts, projectUuid, argsOverride);
     await session.spawn(opts.cols, opts.rows);
     return session;
   }
@@ -79,6 +106,9 @@ export class Session {
         code: "AGENT_NOT_FOUND",
       });
     }
+    // Install the agent's session-id hook before it starts, so its very first
+    // SessionStart is captured (idempotent, best-effort).
+    ensureHookInstalled(this.agent);
 
     this.terminal = new Bun.Terminal({
       cols,
@@ -87,7 +117,7 @@ export class Session {
       exit: (_t, code, signal) => this.onTerminalExit(code, signal),
     });
 
-    this.proc = Bun.spawn([binPath, ...spec.args], {
+    this.proc = Bun.spawn([binPath, ...(this.argsOverride ?? spec.args)], {
       terminal: this.terminal,
       cwd: resolveCwd(this.projectPath),
       env: {
@@ -98,11 +128,34 @@ export class Session {
         // Make `clidable …` (AI Team delegation) resolve inside this agent's
         // terminal without a global install — prepend our shim dir to PATH.
         PATH: pathWithClidableBin(),
+        // Durable-session hooks: the agent's SessionStart hook (once installed
+        // into its config) reads these to report its session id back to us for
+        // resume. Inert until the hook exists; the hook itself also early-exits
+        // when CLIDABLE is unset, so a non-Clidable session never reports.
+        CLIDABLE: "1",
+        CLIDABLE_TERMINAL_ID: this.id,
+        CLIDABLE_REPORT_URL: hookReportUrl(),
       },
       onExit: (_p, code, signalCode) => {
         this.onProcExit(code ?? 0, signalCode != null ? String(signalCode) : null);
       },
     });
+
+    this.spawnedAt = Date.now();
+    // Durable record. Best-effort: a persistence failure must never stop the
+    // agent from running.
+    if (this.projectUuid) {
+      try {
+        upsertTerminal({
+          id: this.id,
+          projectUuid: this.projectUuid,
+          agentId: this.agent,
+          cwd: resolveCwd(this.projectPath),
+        });
+      } catch {
+        // recording is non-critical
+      }
+    }
   }
 
   private onTerminalData(data: Uint8Array): void {
@@ -127,6 +180,22 @@ export class Session {
     this.exitSignal = signal;
     for (const s of this.subscribers) s.onExit(code, signal);
     clearTerminal(this.id); // free the detector's rolling buffer
+    // Keep the record but mark it dormant — the process is gone, yet the agent
+    // can be resumed later (claude --resume …). An explicit user close deletes
+    // the record first (manager.kill), so this UPDATE simply no-ops there.
+    if (this.projectUuid) {
+      try {
+        markDormant(this.id, true);
+        // A resume that died almost immediately means the ref was stale —
+        // forget it so the next open spawns fresh instead of re-failing.
+        if (this.argsOverride && Date.now() - this.spawnedAt < RESUME_FAILFAST_MS) {
+          setAgentRef(this.id, null);
+        }
+      } catch {
+        // non-critical
+      }
+    }
+    clearAgentStatus(this.id); // no live status once the process is gone
     this.terminal?.close();
     this.terminal = null;
     this.proc = null;

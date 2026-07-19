@@ -7,7 +7,38 @@
  * connections — disconnect leaves the PTY running so a refreshing client
  * can resume.
  */
+import { stat } from "node:fs/promises";
 import { Session, type SessionSpawnOptions } from "./session";
+import { ensureProjectUuid } from "../checkpoints/project";
+import { deleteTerminal, getTerminal } from "./terminal-store";
+import { resumePlan } from "./agent-resume";
+
+/**
+ * If this id has a durable record with a captured agent session ref, return the
+ * launch args that resume it (e.g. ["--resume", "<id>"]) — the bin name is
+ * dropped since Session resolves the binary itself. Null → spawn fresh.
+ */
+function resumeArgsFor(opts: SessionSpawnOptions): string[] | null {
+  const record = getTerminal(opts.id);
+  if (!record?.agentRef) return null;
+  const plan = resumePlan(opts.agent, record.agentRef);
+  return plan ? plan.slice(1) : null;
+}
+
+/**
+ * Resolve the project UUID for a spawn's durable record — but only for a real
+ * on-disk directory (so a `~`/bogus path never mints a stray `.clidable/` id).
+ * Any failure → null (recording is best-effort; the spawn proceeds regardless).
+ */
+async function resolveRecordingUuid(projectPath: string): Promise<string | null> {
+  try {
+    const st = await stat(projectPath);
+    if (!st.isDirectory()) return null;
+    return await ensureProjectUuid(projectPath);
+  } catch {
+    return null;
+  }
+}
 
 class SessionManager {
   private sessions = new Map<string, Session>();
@@ -46,11 +77,21 @@ class SessionManager {
     const inFlight = this.pending.get(opts.id);
     if (inFlight) return inFlight;
     if (existing) this.sessions.delete(opts.id);
-    const spawn = Session.create(opts)
+    // Resolve the project UUID INSIDE the spawn chain (not before `pending` is
+    // set) so a concurrent open still shares this one spawn — awaiting here
+    // first would reopen the double-spawn race the pending map exists to close.
+    const spawn = resolveRecordingUuid(opts.projectPath)
+      .then((projectUuid) => Session.create(opts, projectUuid, resumeArgsFor(opts)))
       .then((session) => {
         if (this.killedWhilePending.delete(opts.id)) {
-          // close raced the spawn — honor it now that a process exists.
+          // close raced the spawn — honor it now that a process exists, and
+          // forget the record its spawn just wrote (the user closed the tab).
           session.kill();
+          try {
+            deleteTerminal(opts.id);
+          } catch {
+            // non-critical
+          }
           return session;
         }
         this.sessions.set(opts.id, session);
@@ -92,6 +133,14 @@ class SessionManager {
   }
 
   kill(id: string): void {
+    // An explicit close forgets the durable record entirely (unlike the reaper,
+    // which keeps it dormant for later resume). Best-effort; also covers the
+    // mid-spawn case below where the record is written as the spawn resolves.
+    try {
+      deleteTerminal(id);
+    } catch {
+      // non-critical
+    }
     const s = this.sessions.get(id);
     if (s) {
       s.kill();
