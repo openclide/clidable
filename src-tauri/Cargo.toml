@@ -30,6 +30,11 @@ urlencoding = "2.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Composite the tray icon's status pip (a colored corner circle) onto the base
+# menu-bar mark at startup. PNG-only to keep the build lean — decode tray.png,
+# resize, draw the dot, hand raw RGBA to Tauri.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # OS-level window vibrancy (real desktop blur). See PLAN.md §9.
 window-vibrancy = "0.7"
 
