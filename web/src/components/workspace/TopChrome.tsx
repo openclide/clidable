@@ -28,7 +28,7 @@ interface Props {
   /** Dev-server terminal sheet state + toggle (also reachable from the layout menu). */
   termOpen: boolean;
   onToggleTerminal: () => void;
-  /** Terminal dock (roster of all terminals) visibility + toggle. */
+  /** Agents Dock (roster of all terminals) visibility + toggle. */
   dockVisible: boolean;
   onToggleDock: () => void;
   onBack: () => void;
@@ -251,7 +251,7 @@ function LayoutMenu({
           icon={<TerminalGlyph />}
         />
         <MenuRow
-          label="Terminal dock"
+          label="Agents Dock"
           checked={dockVisible}
           onClick={onToggleDock}
           icon={

@@ -36,13 +36,13 @@ interface Props {
 }
 
 /**
- * Dock strip below the pane grid — a roster of every terminal (live +
- * minimized), each with its activity dot, project initial, and agent. Click a
- * live one to jump to it; click a minimized one to restore it. Also a drop
- * target: dragging a tab chip here minimizes it. Hidden by default; toggled
- * from the layout menu.
+ * Agents Dock — the full-width strip below both panes (terminals + preview). A
+ * roster of every terminal (live + minimized), each with its activity dot,
+ * project initial, and agent. Click a live one to jump to it; click a minimized
+ * one to restore it. Also a drop target: dragging a tab chip here minimizes it.
+ * Hidden by default; toggled from the layout menu.
  */
-export function TerminalDock({
+export function AgentsDock({
   entries,
   projectsById,
   openProjects,
@@ -83,7 +83,8 @@ export function TerminalDock({
         const t = entry.terminal;
         const agent = getAgent(t.agentId);
         const projectName = projectsById.get(t.projectId)?.name ?? "?";
-        const label = `${shortAgentName(agent.name)} · ${projectName}`;
+        const name = t.title?.trim() || shortAgentName(agent.name);
+        const label = `${name} · ${projectName}`;
         const isVisible = visibleIds.has(t.instanceId);
         return (
           <button
@@ -117,7 +118,7 @@ export function TerminalDock({
               size={12}
               className="shrink-0 opacity-90"
             />
-            <span className="truncate">{shortAgentName(agent.name)}</span>
+            <span className="truncate">{name}</span>
             {entry.minimized && (
               <span
                 role="button"

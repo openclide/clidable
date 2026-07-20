@@ -20,6 +20,7 @@ import {
   moveTab,
   nextPaneId,
   removeTab,
+  renameTab,
   reservePaneIds,
   setActiveTab,
   setCollapsed,
@@ -29,7 +30,7 @@ import {
   type PaneId,
   type TileTerminal,
 } from "./paneTree";
-import { TerminalDock, type DockEntry } from "./TerminalDock";
+import { AgentsDock, type DockEntry } from "./AgentsDock";
 import { saveWorkspace, type WorkspaceFull } from "../../lib/workspaces-client";
 import { getLastAgent, type Project } from "../../lib/projects-client";
 import type { AgentId } from "../welcome/data";
@@ -518,6 +519,12 @@ export function WorkspaceScreen({ workspace, onBack }: Props) {
     setFocusedPaneId(paneId);
   };
 
+  // Rename a tab (custom label overriding the agent name); null clears it. Lives
+  // in the pane tree, so the workspace autosave persists it.
+  const handleRenameTab = (paneId: PaneId, tabIndex: number, title: string | null) => {
+    setPaneRoot((prev) => renameTab(prev, paneId, tabIndex, title));
+  };
+
   // Collapse a pane to its header bar in place (or expand it back). The leaf
   // stays in the tree, so expanding restores the exact layout.
   const handleToggleCollapse = (paneId: PaneId) => {
@@ -710,12 +717,13 @@ export function WorkspaceScreen({ workspace, onBack }: Props) {
     openProjects[0]?.path ??
     "~";
 
-  // Shared by both shells — the dock roster under the terminal grid. Hidden by
-  // default (layout-menu toggle), but forced visible while anything is
-  // minimized so a minimized terminal is never stranded off-screen.
+  // Shared by both shells — the Agents Dock, a roster of every terminal. Hidden
+  // by default (layout-menu toggle), but forced visible while anything is
+  // minimized so a minimized terminal is never stranded off-screen. On desktop
+  // it spans the full width below both panes; on mobile it sits under the CLI view.
   const dockShown = dockVisible || minimized.length > 0;
   const dock = (
-    <TerminalDock
+    <AgentsDock
       entries={dockEntries}
       projectsById={projectsById}
       openProjects={openProjects}
@@ -780,6 +788,7 @@ export function WorkspaceScreen({ workspace, onBack }: Props) {
                 onPickForTab={handlePickForTab}
                 onCloseTab={handleCloseTab}
                 onSelectTab={handleSelectTab}
+                onRenameTab={handleRenameTab}
                 onSplit={handleSplit}
                 onMinimizeTab={handleMinimizeTab}
                 onToggleCollapse={handleToggleCollapse}
@@ -830,59 +839,66 @@ export function WorkspaceScreen({ workspace, onBack }: Props) {
         onOpenTool={setOpenTool}
       />
 
-      <main ref={mainRef} className="flex min-h-0 flex-1 px-3 pb-3">
-        <div
-          className={`flex min-w-0 flex-col ${paneTransition}`}
-          style={{ flex: `1 1 ${100 - previewPct}%` }}
-        >
-          <div className="min-h-0 flex-1">
-            <TerminalSplits
-              root={paneRoot}
-              projectsById={projectsById}
+      <main ref={mainRef} className="flex min-h-0 flex-1 flex-col px-3 pb-3">
+        {/* Top: the two-pane row (terminals | preview). The Agents Dock spans
+            the full width below it. */}
+        <div className="flex min-h-0 min-w-0 flex-1">
+          <div
+            className={`flex min-w-0 flex-col ${paneTransition}`}
+            style={{ flex: `1 1 ${100 - previewPct}%` }}
+          >
+            <div className="min-h-0 flex-1">
+              <TerminalSplits
+                root={paneRoot}
+                projectsById={projectsById}
+                openProjects={openProjects}
+                activeProjectId={activeProjectId}
+                focusedId={focusedPaneId}
+                allowClose={allowClose}
+                compact={compact}
+                onFocus={setFocusedPaneId}
+                onPickForTab={handlePickForTab}
+                onCloseTab={handleCloseTab}
+                onSelectTab={handleSelectTab}
+                onRenameTab={handleRenameTab}
+                onSplit={handleSplit}
+                onMinimizeTab={handleMinimizeTab}
+                onToggleCollapse={handleToggleCollapse}
+                onMoveTab={handleMoveTab}
+                onExit={onBack}
+              />
+            </div>
+          </div>
+
+          <PaneResizer
+            active={dragging}
+            valueNow={previewPct}
+            onPointerDown={startDrag}
+            onDoubleClick={resetSplit}
+            onKeyDown={nudgeSplit}
+          />
+
+          <div
+            aria-hidden={!previewVisible}
+            className={`min-w-0 ${paneTransition} ${
+              previewVisible ? "opacity-100" : "pointer-events-none opacity-0"
+            }`}
+            style={{ flex: `1 1 ${previewPct}%` }}
+          >
+            <SidePane
               openProjects={openProjects}
-              activeProjectId={activeProjectId}
-              focusedId={focusedPaneId}
-              allowClose={allowClose}
-              compact={compact}
-              onFocus={setFocusedPaneId}
-              onPickForTab={handlePickForTab}
-              onCloseTab={handleCloseTab}
-              onSelectTab={handleSelectTab}
-              onSplit={handleSplit}
-              onMinimizeTab={handleMinimizeTab}
-              onToggleCollapse={handleToggleCollapse}
-              onMoveTab={handleMoveTab}
-              onExit={onBack}
+              previewProjectId={activeProjectId}
+              onPreviewProjectChange={setActiveProjectId}
+              mode={previewMode}
+              onModeChange={setPreviewMode}
+              termOpen={termOpen}
+              onTermOpenChange={setTermOpen}
             />
           </div>
-          {dockShown && dock}
         </div>
 
-        <PaneResizer
-          active={dragging}
-          valueNow={previewPct}
-          onPointerDown={startDrag}
-          onDoubleClick={resetSplit}
-          onKeyDown={nudgeSplit}
-        />
-
-        <div
-          aria-hidden={!previewVisible}
-          className={`min-w-0 ${paneTransition} ${
-            previewVisible ? "opacity-100" : "pointer-events-none opacity-0"
-          }`}
-          style={{ flex: `1 1 ${previewPct}%` }}
-        >
-          <SidePane
-            openProjects={openProjects}
-            previewProjectId={activeProjectId}
-            onPreviewProjectChange={setActiveProjectId}
-            mode={previewMode}
-            onModeChange={setPreviewMode}
-            termOpen={termOpen}
-            onTermOpenChange={setTermOpen}
-          />
-        </div>
+        {/* Agents Dock — full-width strip below both panes. */}
+        {dockShown && dock}
 
         {/* Mid-drag: a transparent capture layer above the iframe so the
             pointer stream never gets eaten by the preview's cross-origin

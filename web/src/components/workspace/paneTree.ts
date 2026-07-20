@@ -17,6 +17,9 @@ export interface TileTerminal {
   projectId: string;
   agentId: AgentId;
   instanceId: string;
+  /** User-set label shown in place of the agent name (tab + dock). Absent = show
+   *  the agent's name. Persisted in the workspace tree. */
+  title?: string;
 }
 
 export interface LeafPane {
@@ -188,6 +191,23 @@ export function setTab(
   return mapLeaf(root, paneId, (leaf) => {
     const tabs = leaf.tabs.slice();
     tabs[tabIndex] = tab;
+    return { ...leaf, tabs };
+  });
+}
+
+/** Set (or clear, with null) a tab's custom title — the label shown in place of
+ *  the agent name. No-op if the slot is empty. */
+export function renameTab(
+  root: Pane,
+  paneId: PaneId,
+  tabIndex: number,
+  title: string | null,
+): Pane {
+  return mapLeaf(root, paneId, (leaf) => {
+    const existing = leaf.tabs[tabIndex];
+    if (!existing) return leaf;
+    const tabs = leaf.tabs.slice();
+    tabs[tabIndex] = { ...existing, title: title ?? undefined };
     return { ...leaf, tabs };
   });
 }

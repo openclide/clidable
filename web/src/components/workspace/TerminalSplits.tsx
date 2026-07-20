@@ -24,6 +24,8 @@ interface Props {
   ) => void;
   onCloseTab: (id: PaneId, tabIndex: number) => void;
   onSelectTab: (id: PaneId, tabIndex: number) => void;
+  /** Rename a tab (custom label); null clears the override. */
+  onRenameTab: (id: PaneId, tabIndex: number, title: string | null) => void;
   onSplit: (id: PaneId, direction: "row" | "column" | "tab") => void;
   /** Collapse a tab out of the layout into the minimized dock. */
   onMinimizeTab: (id: PaneId, tabIndex: number) => void;
@@ -186,6 +188,7 @@ export function TerminalSplits({
   onPickForTab,
   onCloseTab,
   onSelectTab,
+  onRenameTab,
   onSplit,
   onMinimizeTab,
   onToggleCollapse,
@@ -243,6 +246,9 @@ export function TerminalSplits({
             }
             onCloseTab={(tabIndex) => onCloseTab(rect.leaf.id, tabIndex)}
             onSelectTab={(tabIndex) => onSelectTab(rect.leaf.id, tabIndex)}
+            onRenameTab={(tabIndex, title) =>
+              onRenameTab(rect.leaf.id, tabIndex, title)
+            }
             onSplit={(dir) => onSplit(rect.leaf.id, dir)}
             onMinimize={(tabIndex) => onMinimizeTab(rect.leaf.id, tabIndex)}
             onToggleCollapse={() => onToggleCollapse(rect.leaf.id)}

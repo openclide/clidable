@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { TerminalView } from "./TerminalView";
 import { Composer } from "./Composer";
@@ -13,6 +13,7 @@ import {
   type Project,
 } from "../welcome/data";
 import { PositionedPortal } from "../ui/PositionedPortal";
+import { POPOVER_GLASS_STYLE, usePopoverDismiss } from "../ui/popover";
 import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
 import {
   clearTerminalDrag,
@@ -42,6 +43,8 @@ interface Props {
   onPickForTab: (tabIndex: number, next: { projectId: string; agentId: AgentId }) => void;
   onCloseTab: (tabIndex: number) => void;
   onSelectTab: (tabIndex: number) => void;
+  /** Rename a tab (custom label); null clears the override. */
+  onRenameTab: (tabIndex: number, title: string | null) => void;
   onFocus: () => void;
   onSplit: (direction: "row" | "column" | "tab") => void;
   /** Collapse a tab out of the layout into the minimized dock. */
@@ -73,6 +76,8 @@ export function TerminalTile({
   onPickForTab,
   onCloseTab,
   onSelectTab,
+  onRenameTab,
+  onMinimize,
   onFocus,
   onSplit,
   onToggleCollapse,
@@ -168,6 +173,8 @@ export function TerminalTile({
                 showClose={showCloseOnTab}
                 onSelect={() => onSelectTab(i)}
                 onClose={() => onCloseTab(i)}
+                onRename={(title) => onRenameTab(i, title)}
+                onMinimize={() => onMinimize(i)}
                 onDragStartChip={
                   t
                     ? (e) =>
@@ -260,6 +267,8 @@ function TabChip({
   showClose,
   onSelect,
   onClose,
+  onRename,
+  onMinimize,
   onDragStartChip,
   onDropBefore,
 }: {
@@ -272,28 +281,81 @@ function TabChip({
   showClose: boolean;
   onSelect: () => void;
   onClose: () => void;
+  /** Rename this tab (double-click the name); null clears the custom label. */
+  onRename: (title: string | null) => void;
+  /** Collapse this tab into the Agents Dock. */
+  onMinimize: () => void;
   /** Present only for assigned tabs — makes the chip a drag source. */
   onDragStartChip?: (e: React.DragEvent) => void;
   /** A dragged tab was dropped on this chip → insert before it. */
   onDropBefore: (from: TerminalDragPayload) => void;
 }) {
   const [dropHover, setDropHover] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  // True while an edit is open and a plain blur (click-away) should commit it.
+  // Enter/Escape clear it so they own the commit-or-cancel and the input's
+  // unmount-blur can't re-fire it (Enter) or wrongly commit a cancel (Escape).
+  const commitOnBlurRef = useRef(false);
+  // Right-click context menu, positioned at the cursor.
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  // Stable so the menu's dismiss listeners subscribe once, not per render.
+  const dismissMenu = useCallback(() => setMenuAt(null), []);
   const agent = tab ? getAgent(tab.agentId) : null;
   const agentName = agent ? shortAgentName(agent.name) : "";
+  // The visible name: a custom title if set, else the agent's name.
+  const displayName = tab?.title?.trim() || agentName;
   // Accessible name + hover title — the project otherwise shows only as an
   // aria-hidden single-letter badge, so name it here for screen readers/hover.
   const label = agent
     ? projectName
-      ? `${agentName} · ${projectName}`
-      : agentName
+      ? `${displayName} · ${projectName}`
+      : displayName
     : "Unassigned terminal";
+
+  function startEdit() {
+    if (!tab) return;
+    setDraft(displayName);
+    commitOnBlurRef.current = true;
+    setEditing(true);
+  }
+  function applyRename() {
+    const v = draft.trim();
+    // Blank or same as the agent's own name → drop the override (revert to default).
+    onRename(v && v !== agentName ? v : null);
+  }
+  // Close the editor. `commit` = save the draft; Enter/Escape call this directly
+  // and disarm the blur so it can't re-run.
+  function finishEdit(commit: boolean) {
+    commitOnBlurRef.current = false;
+    if (commit) applyRename();
+    setEditing(false);
+  }
+  // The input's blur handler: a real click-away commits; a blur that follows
+  // Enter/Escape (ref already disarmed) just ensures the editor is closed.
+  function onEditBlur() {
+    if (commitOnBlurRef.current) finishEdit(true);
+    else setEditing(false);
+  }
   return (
+    <>
     <button
       type="button"
       onClick={onSelect}
       title={label}
       aria-label={label}
-      draggable={!!onDragStartChip}
+      onContextMenu={
+        // While editing, let the native text menu (cut/copy/paste) win.
+        tab && !editing
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onSelect(); // right-click acts on this tab, so select it first
+              setMenuAt({ x: e.clientX, y: e.clientY });
+            }
+          : undefined
+      }
+      draggable={!editing && !!onDragStartChip}
       onDragStart={onDragStartChip}
       // dragend fires on the SOURCE after drop or cancel — the one reliable
       // place to forget the window-local drag payload.
@@ -347,7 +409,42 @@ function TabChip({
             size={12}
             className="opacity-90"
           />
-          <span className="truncate">{agentName}</span>
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              spellCheck={false}
+              onChange={(e) => setDraft(e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
+              // Keep clicks/keys inside the field — don't select/drag the tab.
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  finishEdit(true);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  finishEdit(false);
+                }
+              }}
+              onBlur={onEditBlur}
+              size={Math.max(draft.length + 1, 4)}
+              className="min-w-0 rounded bg-white/10 px-1 text-foreground outline-none ring-1 ring-white/20"
+            />
+          ) : (
+            <span
+              className="truncate"
+              title="Double-click to rename"
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                startEdit();
+              }}
+            >
+              {displayName}
+            </span>
+          )}
         </>
       ) : (
         <span className="text-foreground/45">(unassigned)</span>
@@ -384,6 +481,130 @@ function TabChip({
           "
         />
       )}
+    </button>
+    {menuAt && tab && (
+      <TabContextMenu
+        x={menuAt.x}
+        y={menuAt.y}
+        showClose={showClose}
+        onRename={startEdit}
+        onMinimize={onMinimize}
+        onClose={onClose}
+        onDismiss={dismissMenu}
+      />
+    )}
+    </>
+  );
+}
+
+/**
+ * Right-click context menu for a tab, positioned at the cursor. Portals to
+ * <body> so it escapes the tile's overflow clip; closes on outside click,
+ * Escape, or scroll — the same pattern as SplitMenu.
+ */
+function TabContextMenu({
+  x,
+  y,
+  showClose,
+  onRename,
+  onMinimize,
+  onClose,
+  onDismiss,
+}: {
+  x: number;
+  y: number;
+  showClose: boolean;
+  onRename: () => void;
+  onMinimize: () => void;
+  onClose: () => void;
+  onDismiss: () => void;
+}) {
+  const popRef = useRef<HTMLDivElement>(null);
+  usePopoverDismiss(popRef, onDismiss, { dismissOnScroll: true });
+
+  // Position at the cursor, then clamp against the menu's REAL measured size
+  // (smaller when Close is hidden) before paint, so it never runs off-screen.
+  const [pos, setPos] = useState({ top: y, left: x });
+  useLayoutEffect(() => {
+    const el = popRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
+      top: Math.max(8, Math.min(y, window.innerHeight - height - 8)),
+    });
+  }, [x, y, showClose]);
+
+  const run = (fn: () => void) => () => {
+    fn();
+    onDismiss();
+  };
+
+  return createPortal(
+    <div
+      ref={popRef}
+      role="menu"
+      onClick={(e) => e.stopPropagation()}
+      style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 50, ...POPOVER_GLASS_STYLE }}
+      className="flex w-[168px] flex-col gap-0.5 rounded-xl p-1.5"
+    >
+      <TabMenuItem
+        label="Rename"
+        onClick={run(onRename)}
+        glyph={<path d="M4 20h4L18.5 9.5a2 2 0 00-3-3L5 17v3z" />}
+      />
+      <TabMenuItem
+        label="Minimize"
+        onClick={run(onMinimize)}
+        glyph={<path d="M5 15l7 5 7-5M5 9h14" />}
+      />
+      {showClose && (
+        <>
+          <span aria-hidden className="mx-1 my-0.5 h-px bg-white/[0.08]" />
+          <TabMenuItem
+            label="Close"
+            tone="danger"
+            onClick={run(onClose)}
+            glyph={<path d="M6 6l12 12M6 18L18 6" />}
+          />
+        </>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+function TabMenuItem({
+  label,
+  glyph,
+  onClick,
+  tone,
+}: {
+  label: string;
+  glyph: React.ReactNode;
+  onClick: () => void;
+  tone?: "danger";
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={`
+        flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]
+        transition-[background-color,color] duration-150
+        focus:outline-none focus-visible:bg-white/[0.06]
+        ${
+          tone === "danger"
+            ? "text-rose-200/85 hover:bg-rose-500/15 hover:text-rose-100"
+            : "text-foreground/80 hover:bg-white/[0.06] hover:text-foreground"
+        }
+      `}
+    >
+      <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+        {glyph}
+      </svg>
+      {label}
     </button>
   );
 }
@@ -429,24 +650,10 @@ function SplitMenu({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (popRef.current?.contains(target)) return;
-      if (anchorRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const closeMenu = useCallback(() => setOpen(false), []);
+  // Dismiss on outside click / Escape while open; the anchor button is exempt
+  // (it toggles). Repositioning on scroll/resize stays in the layout effect above.
+  usePopoverDismiss(popRef, closeMenu, { ignoreRef: anchorRef, enabled: open });
 
   const pick = (direction: "row" | "column" | "tab") => {
     onSplit(direction);
@@ -483,24 +690,16 @@ function SplitMenu({
             ref={popRef}
             role="menu"
             onClick={(e) => e.stopPropagation()}
+            // Glass painted at body level (see POPOVER_GLASS_STYLE) so its
+            // backdrop-filter blurs the real page content beneath it.
             style={{
+              position: "fixed",
               top: coords.top,
               left: coords.left,
-              // Glass painted at body level, outside any backdrop-root
-              // ancestor — backdrop-filter now sees the raw page content
-              // beneath it and can actually blur it.
-              background:
-                "color-mix(in oklch, var(--color-background) 38%, transparent)",
-              backdropFilter: "blur(32px) saturate(180%)",
-              WebkitBackdropFilter: "blur(32px) saturate(180%)",
-              border: "1px solid var(--color-glass-edge)",
-              boxShadow:
-                "inset 0 1px 0 0 rgba(255,255,255,0.05), 0 18px 40px rgba(0,0,0,0.45)",
+              zIndex: 50,
+              ...POPOVER_GLASS_STYLE,
             }}
-            className="
-              fixed z-50
-              flex w-[210px] flex-col gap-0.5 rounded-xl p-1.5
-            "
+            className="flex w-[210px] flex-col gap-0.5 rounded-xl p-1.5"
           >
             <SplitOption
               glyph={<SplitGlyph direction="row" />}
