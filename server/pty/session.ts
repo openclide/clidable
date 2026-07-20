@@ -16,6 +16,7 @@ import { markDormant, setAgentRef, upsertTerminal } from "./terminal-store";
 import { hookReportUrl } from "./hook-report";
 import { ensureHookInstalled } from "./agent-hooks";
 import { clearAgentStatus } from "./agent-status";
+import { setSessionLabel } from "./session-label";
 import type { TerminalAgentId } from "../../shared/types";
 
 // A resume-launched session (argsOverride set) that dies this fast almost
@@ -196,6 +197,7 @@ export class Session {
       }
     }
     clearAgentStatus(this.id); // no live status once the process is gone
+    setSessionLabel(this.id, null); // drop any tray name too
     this.terminal?.close();
     this.terminal = null;
     this.proc = null;
@@ -260,6 +262,14 @@ export class Session {
    *  still attached. Drives the manager's idle-session reaper. */
   detachedFor(now: number): number | null {
     return this.detachedAt === null ? null : now - this.detachedAt;
+  }
+
+  /** True while a client is attached (viewing) or retaining (backgrounding)
+   *  this session — i.e. it's in active use, not an orphan the reaper is
+   *  counting down. The tray lists only in-use sessions so a workspace the user
+   *  closed (its PTYs linger through the detach grace) doesn't show as running. */
+  get inUse(): boolean {
+    return this.detachedAt === null;
   }
 
   write(data: string | Uint8Array): void {

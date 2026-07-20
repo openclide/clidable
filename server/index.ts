@@ -21,6 +21,7 @@ import { clearLock, serverPort, writeLock } from "./launch/daemon";
 import { openDb } from "./db";
 import { setReportPort } from "./pty/hook-report";
 import { agentsHandler } from "./routes/agents";
+import { liveAgentsHandler, ackDoneHandler } from "./routes/agents-live";
 import { agentHookHandler } from "./routes/agent-hook";
 import { attachmentUploadHandler } from "./routes/attachments";
 import {
@@ -253,6 +254,8 @@ try {
     "/home": landing,
     "/api/health": { GET: healthHandler },
     "/api/agents": { GET: agentsHandler },
+    "/api/agents/live": { GET: liveAgentsHandler },
+    "/api/agents/ack-done": { POST: ackDoneHandler },
     "/api/agent-hook": { POST: agentHookHandler },
     "/api/projects": {
       GET: projectsListHandler,

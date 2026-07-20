@@ -15,6 +15,7 @@ import type { ServerWebSocket } from "bun";
 import { sessionManager } from "../pty/manager";
 import { type Session, type SessionSubscriber } from "../pty/session";
 import { getAgentStatus, onAgentStatus } from "../pty/agent-status";
+import { setSessionLabel } from "../pty/session-label";
 import {
   TERMINAL_FRAME_KIND_INPUT,
   TERMINAL_FRAME_KIND_OUTPUT,
@@ -168,6 +169,14 @@ async function handleControl(
 
   if (msg.type === "resize") {
     sessionManager.get(msg.id)?.resize(msg.cols, msg.rows);
+    return;
+  }
+
+  if (msg.type === "label") {
+    // Session-scoped, not socket-scoped: the tray shows names for every
+    // window's agents, so it's global and outlives this connection (cleared
+    // only on retitle-to-blank or when the process exits).
+    setSessionLabel(msg.id, msg.title);
     return;
   }
 

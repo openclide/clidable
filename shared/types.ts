@@ -70,6 +70,10 @@ export type TerminalClientMessage =
   | { type: "unsubscribe"; id: string }
   | { type: "resize"; id: string; cols: number; rows: number }
   | { type: "close"; id: string }
+  /** Mirror a tab's user-given name to the server so the desktop tray can show
+   *  it (the tray reads the server, which otherwise only knows the agent type).
+   *  `null` clears it back to the default. */
+  | { type: "label"; id: string; title: string | null }
   /** Full set of session ids this client still owns (open tabs + minimized
    *  terminals). Retained sessions are exempt from the server's idle-session
    *  reaper even with no output subscriber — a minimized or backgrounded
@@ -92,6 +96,30 @@ export type TerminalServerMessage =
 /** Coarse per-agent lifecycle state, derived from the agent's own hooks
  *  (working / idle / blocked). Drives the live status indicator. */
 export type TerminalAgentState = "working" | "idle" | "blocked";
+
+/**
+ * Tray/menubar view of a live agent's state. Extends the runtime
+ * `TerminalAgentState` with a derived `"done"` — an agent that finished a turn
+ * (went working → idle) and hasn't been re-prompted yet. Priority for the tray
+ * icon's corner pip is blocked ▸ done ▸ working ▸ idle.
+ */
+export type TrayAgentState = "working" | "idle" | "blocked" | "done";
+
+/** One live PTY session as the tray sees it (see GET /api/agents/live). */
+export interface LiveAgent {
+  /** PTY session id (== terminal instanceId). */
+  id: string;
+  agent: TerminalAgentId;
+  /** Display name, e.g. "Claude Code". */
+  name: string;
+  state: TrayAgentState;
+}
+
+/** GET /api/agents/live — every live session across the whole server, for the
+ *  desktop tray's agent roster + corner-pip status. */
+export interface LiveAgentsResponse {
+  agents: LiveAgent[];
+}
 
 /**
  * Fixed-width session id used in binary frame headers. 64 ASCII bytes
