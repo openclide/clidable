@@ -53,6 +53,12 @@ const ARROW_TUI_KEYS: ReadonlyArray<{
   { key: "ArrowRight", seq: "\x1b[C", atEdge: (v, r) => r.head === v.state.doc.length },
 ];
 
+// Cancelling passthrough backspaces out the chars we forwarded PLUS this pad,
+// since the agent can grow its own input line beyond our count (Tab-accepting a
+// completion, e.g. `@src/fo` → `@src/foo.ts`). A backspace on an empty line is a
+// no-op, so over-clearing is safe; the pad covers a typical completed path.
+const PASSTHROUGH_CLEAR_PAD = 80;
+
 /** A file attached to the outgoing message. `path` is null while the upload
  *  is in flight (or after it failed — see `error`); `previewUrl` is a local
  *  object URL for image thumbnails. */
@@ -121,6 +127,24 @@ export function Composer({
   const agentIdRef = useRef(agentId);
   agentIdRef.current = agentId;
   const [isEmpty, setIsEmpty] = useState(true);
+
+  // The keymap / input closures are built once (view effect deps []), so read
+  // `plain` through a ref or it goes stale across an in-place agent switch.
+  const plainRef = useRef(plain);
+  plainRef.current = plain;
+
+  // "Passthrough" (Strategy C): when an AGENT composer is empty and the user
+  // types `/` or `@`, stop composing and forward keystrokes straight to the PTY
+  // so the agent renders its OWN command / file menu in the terminal — highest
+  // fidelity, no catalog to maintain. The ref drives the closures; the state
+  // drives the banner. `len` counts net forwarded chars, so backspacing out of
+  // the trigger returns to normal composing.
+  const passthroughRef = useRef(false);
+  const passthroughLenRef = useRef(0);
+  // The session we entered passthrough on — cleanup targets THIS, so a tab
+  // switch mid-passthrough can't misroute the line-clear to another session.
+  const passthroughSessionRef = useRef(sessionId);
+  const [passthrough, setPassthrough] = useState(false);
 
   // Attached files (pasted images, dropped files, paperclip picks). Uploaded
   // to the server immediately; on Send their absolute paths are appended to
@@ -388,6 +412,42 @@ export function Composer({
     terminalClient.writeText(sessionIdRef.current, seq);
   }
 
+  // Enter/leave passthrough (Strategy C), keeping the ref (closures) and state
+  // (banner) in lockstep. `enterPassthrough` forwards the trigger char and PINS
+  // the session so cleanup targets it even if the active tab later moves.
+  function enterPassthrough(seq: string): void {
+    passthroughRef.current = true;
+    passthroughLenRef.current = seq.length;
+    passthroughSessionRef.current = sessionIdRef.current;
+    setPassthrough(true);
+    sendKey(seq);
+  }
+  function exitPassthrough(): void {
+    if (!passthroughRef.current) return;
+    passthroughRef.current = false;
+    passthroughLenRef.current = 0;
+    setPassthrough(false);
+  }
+  // Cancel: clear the agent's input line so a leftover `/cmd` / `@path` can't
+  // corrupt the next normal message (bracketed-paste would append to it). We
+  // backspace out what we forwarded plus a pad — the agent may have grown its own
+  // line (a completion) beyond our count, and backspacing an empty line no-ops —
+  // and write to the PINNED session, not whatever tab is active now.
+  function cancelPassthrough(): void {
+    if (!passthroughRef.current) return;
+    const n = passthroughLenRef.current + PASSTHROUGH_CLEAR_PAD;
+    terminalClient.writeText(passthroughSessionRef.current, "\x7f".repeat(n));
+    exitPassthrough();
+  }
+  // Enter while in passthrough: submit to the agent (run the command / accept the
+  // mention) and leave passthrough. Shared by Enter, Shift-Enter, and Mod-Enter.
+  function submitPassthrough(): boolean {
+    if (!passthroughRef.current) return false;
+    sendKey("\r");
+    exitPassthrough();
+    return true;
+  }
+
   // Enter completes the boundary fall-through: a composer with something to send
   // sends the message (sendNow); an EMPTY one forwards a bare Enter to the TUI,
   // so after arrow-navigating a menu / approval prompt you can confirm without
@@ -426,10 +486,16 @@ export function Composer({
             {
               key: "Enter",
               run: () => {
+                if (submitPassthrough()) return true;
                 submitOrForwardEnter();
                 return true;
               },
-              shift: insertNewlineAndIndent,
+              shift: (view) => {
+                // In passthrough even Shift-Enter submits to the agent — the box
+                // is a conduit, not a multi-line draft.
+                if (submitPassthrough()) return true;
+                return insertNewlineAndIndent(view);
+              },
             },
             // Mod-Enter is a send alias — same behavior. Always consume it, or a
             // false return would fall through to defaultKeymap's Mod-Enter →
@@ -437,6 +503,7 @@ export function Composer({
             {
               key: "Mod-Enter",
               run: () => {
+                if (submitPassthrough()) return true;
                 submitOrForwardEnter();
                 return true;
               },
@@ -462,7 +529,34 @@ export function Composer({
             {
               key: "Escape",
               run: () => {
+                // In passthrough, Esc CANCELS: clear the agent's line + exit.
+                // Otherwise it's the plain interrupt/cancel key for the TUI.
+                if (passthroughRef.current) {
+                  cancelPassthrough();
+                  return true;
+                }
                 sendKey("\x1b");
+                return true;
+              },
+            },
+            // In passthrough these go to the agent (delete a char in its filter,
+            // accept a completion); otherwise they fall through to the editor's
+            // own handling. Backspacing out of the trigger ends passthrough.
+            {
+              key: "Backspace",
+              run: () => {
+                if (!passthroughRef.current) return false;
+                sendKey("\x7f");
+                passthroughLenRef.current -= 1;
+                if (passthroughLenRef.current <= 0) exitPassthrough();
+                return true;
+              },
+            },
+            {
+              key: "Tab",
+              run: () => {
+                if (!passthroughRef.current) return false;
+                sendKey("\t");
                 return true;
               },
             },
@@ -471,13 +565,51 @@ export function Composer({
           ]),
           EditorView.lineWrapping,
           markdown(),
+          // Strategy-C passthrough (agents only): while active, every typed char
+          // is forwarded to the PTY instead of inserted, so the agent's own menu
+          // filters live. An empty agent composer receiving `/` or `@` starts it.
+          EditorView.inputHandler.of((view, _from, _to, text) => {
+            if (passthroughRef.current) {
+              sendKey(text);
+              passthroughLenRef.current += text.length;
+              return true;
+            }
+            if (
+              !plainRef.current &&
+              view.state.doc.length === 0 &&
+              attachmentsRef.current.length === 0 &&
+              (text === "/" || text === "@")
+            ) {
+              enterPassthrough(text);
+              return true;
+            }
+            return false;
+          }),
           // Pasting or dropping files/images onto the editor attaches them
           // (text pastes/drops fall through to CM's default handling). The
           // drop handler stops propagation so the composer root's onDrop
           // doesn't attach the same files a second time.
           EditorView.domEventHandlers({
+            blur: () => {
+              // Leaving the box cancels passthrough — clear the half-typed `/cmd`
+              // so it can't corrupt a later message when focus returns.
+              cancelPassthrough();
+              return false;
+            },
             paste: (event) => {
               const clip = event.clipboardData;
+              // In passthrough, pasted text drives the agent's menu too — forward
+              // it (CM's paste doesn't route through inputHandler) instead of
+              // letting it land in the conduit box.
+              if (passthroughRef.current) {
+                const pasted = clip?.getData("text/plain") ?? "";
+                if (pasted) {
+                  event.preventDefault();
+                  sendKey(pasted);
+                  passthroughLenRef.current += pasted.length;
+                  return true;
+                }
+              }
               const files = clip?.files;
               // Attach files ONLY when there's no text flavor. Rich apps (Excel,
               // Word, Numbers) put both a rendered image AND the real text on the
@@ -634,6 +766,35 @@ export function Composer({
           {attachments.map((a) => (
             <AttachmentChip key={a.id} attachment={a} onRemove={() => removeAttachment(a.id)} />
           ))}
+        </div>
+      )}
+
+      {/* Passthrough banner — your keys are going to the agent's own menu in the
+          terminal above, not into this box. */}
+      {passthrough && (
+        <div
+          className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] text-foreground/80"
+          style={{ borderColor: `${agent.color}59`, background: `${agent.color}14` }}
+        >
+          <span aria-hidden>⌨</span>
+          <span className="min-w-0 flex-1">
+            Driving{" "}
+            <span className="font-medium" style={{ color: agent.color }}>
+              {agent.name}
+            </span>
+            ’s menu — type to filter · ↑↓ pick · ↵ run · Esc cancel
+          </span>
+          <button
+            type="button"
+            aria-label="Exit"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              cancelPassthrough();
+            }}
+            className="shrink-0 rounded px-1 text-foreground/45 transition-colors hover:bg-white/10 hover:text-foreground/80"
+          >
+            ✕
+          </button>
         </div>
       )}
 
