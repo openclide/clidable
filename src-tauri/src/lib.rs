@@ -137,7 +137,10 @@ fn open_window(app: &AppHandle, query: &str) -> tauri::Result<WebviewWindow> {
         .unwrap_or_else(|_| base.parse().expect("server url is valid"));
     let window = WebviewWindowBuilder::new(app, next_label(), WebviewUrl::External(parsed))
         .title("")
-        .inner_size(1280.0, 800.0)
+        // Open maximized (fills the work area) — the restore size is the fallback
+        // when the user un-maximizes. Keeps parity with the main window's config.
+        .maximized(true)
+        .inner_size(1440.0, 900.0)
         .min_inner_size(720.0, 480.0)
         .resizable(true)
         .transparent(true)
@@ -253,6 +256,9 @@ pub fn run() {
                         // hidden load errored on a not-yet-ready server.
                         let _ = main.navigate(url);
                     }
+                    // Maximize on reveal too — the `maximized: true` config can be
+                    // flaky on a window created hidden, so force it before showing.
+                    let _ = main.maximize();
                     let _ = main.show();
                     let _ = main.set_focus();
                 });
@@ -295,6 +301,24 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // Drive the event loop so we can react to app-level events. On macOS,
+        // clicking the Dock icon of a running-but-hidden app fires `Reopen`
+        // (the app has no visible window because close only HID it) — bring the
+        // main window back, matching the tray's Show. Without this the Dock icon
+        // is a dead click and the tray is the only way in.
+        .run(|_handle, _event| {
+            // Only surface main when the app has NO visible window (it was hidden
+            // on close) — if a secondary workspace window is already up, a Dock
+            // click shouldn't yank the hidden main window in front of it.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = _event
+            {
+                focus_main(_handle);
+            }
+        });
 }
