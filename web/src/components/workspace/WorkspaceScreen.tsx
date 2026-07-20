@@ -38,6 +38,7 @@ import type { WorkspaceTool } from "./WorkspaceTools";
 import { subscribeRevealChanges } from "../../lib/diff-base-store";
 import { terminalClient } from "../../lib/terminal-client";
 import { requestComposerFocus } from "../../lib/composer-focus";
+import { subscribeTrayOpenAgent } from "../../lib/tray";
 
 /* ---------------------------------------------------------------------------
  * Preview-pane sizing. The divider between the terminal and the preview drags
@@ -592,6 +593,61 @@ export function WorkspaceScreen({ workspace, onBack }: Props) {
   const handleCloseMinimized = (instanceId: string) => {
     setMinimized((prev) => prev.filter((m) => m.tab.instanceId !== instanceId));
   };
+
+  // Clicking an agent in the desktop tray → surface that exact terminal. The
+  // tray only knows the session id (== instanceId); resolve it to a tab here,
+  // restoring it from the dock if minimized. Returns whether it's ours so only
+  // the owning window reveals itself (the event fans out to every window). A
+  // ref holds the latest resolver so the tray listener subscribes just once.
+  const openAgentRef = useRef<(instanceId: string) => boolean>(() => false);
+  openAgentRef.current = (instanceId: string): boolean => {
+    if (minimized.some((m) => m.tab.instanceId === instanceId)) {
+      handleRestoreTerminal(instanceId);
+      return true;
+    }
+    for (const leaf of leaves) {
+      const idx = leaf.tabs.findIndex((t) => t?.instanceId === instanceId);
+      if (idx >= 0) {
+        handleFocusTerminal(leaf.id, idx);
+        return true;
+      }
+    }
+    return false;
+  };
+  useEffect(() => subscribeTrayOpenAgent((id) => openAgentRef.current(id)), []);
+
+  // Mirror user-given tab names to the server so the desktop tray shows them
+  // (the tray reads the server, which otherwise only knows the agent-type
+  // name). Diff against the last-sent set: push new/changed names, clear ones
+  // that lost their custom title. Covers rename, restore, and initial load.
+  const sentLabelsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const now = new Map<string, string>();
+    const add = (t: TileTerminal | null) => {
+      const title = t?.title?.trim();
+      if (t && title) now.set(t.instanceId, title);
+    };
+    for (const leaf of leaves) for (const t of leaf.tabs) add(t);
+    for (const m of minimized) add(m.tab);
+    const sent = sentLabelsRef.current;
+    for (const [id, title] of now) {
+      if (sent.get(id) !== title) terminalClient.setLabel(id, title);
+    }
+    for (const id of sent.keys()) {
+      if (!now.has(id)) terminalClient.setLabel(id, null);
+    }
+    sentLabelsRef.current = now;
+  }, [leaves, minimized]);
+
+  // On unmount (leaving the workspace), drop the labels we mirrored so they
+  // don't linger in the client and get re-sent forever after these tabs are
+  // gone. The server clears its own copy when each session exits.
+  useEffect(
+    () => () => {
+      for (const id of sentLabelsRef.current.keys()) terminalClient.dropLabel(id);
+    },
+    [],
+  );
 
   // Drag & drop between/within panes. moveTab returns the original tree for
   // every no-op (including a vanished target), so the === check covers all

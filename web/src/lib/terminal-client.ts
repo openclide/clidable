@@ -52,6 +52,9 @@ class TerminalClient {
   private reconnectDelay = 250;
   /** Last retained-id set sent to the server (open tabs + minimized). */
   private retained: string[] = [];
+  /** User-given tab names mirrored to the server for the desktop tray, re-sent
+   *  on every (re)connect so a fresh socket carries them. */
+  private labels = new Map<string, string>();
   /** Kills requested while disconnected — flushed on the next open socket
    *  so "close terminal during a network blip" still SIGTERMs the PTY
    *  instead of leaving it to the 10-minute reaper. */
@@ -112,6 +115,33 @@ class TerminalClient {
    *  sequences and pasted text (arrow/Esc keys, the touch key-bar, sends). */
   writeText(id: string, text: string): void {
     this.write(id, TEXT_ENCODER.encode(text));
+  }
+
+  /**
+   * Mirror a tab's user-given name to the server (for the desktop tray). Pass
+   * null/blank to clear it back to the agent-type name. Remembered and re-sent
+   * on reconnect. Sessions the user never renamed send nothing.
+   */
+  setLabel(id: string, title: string | null): void {
+    const trimmed = title?.trim() ?? "";
+    if (trimmed) this.labels.set(id, trimmed);
+    else if (!this.labels.delete(id)) return; // clearing an unnamed session: no-op
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          type: "label",
+          id,
+          title: trimmed || null,
+        } satisfies TerminalClientMessage),
+      );
+    }
+  }
+
+  /** Forget a label locally WITHOUT notifying the server (the session's own
+   *  exit clears the server side). Called when a workspace unmounts so stale
+   *  labels don't accumulate here and get re-sent on every reconnect. */
+  dropLabel(id: string): void {
+    this.labels.delete(id);
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -223,6 +253,18 @@ class TerminalClient {
           JSON.stringify({
             type: "retain",
             ids: this.retained,
+          } satisfies TerminalClientMessage),
+        );
+      }
+      // Re-send any user-given tab names — a fresh connection's server has no
+      // memory of them (or the server restarted), so the tray would otherwise
+      // fall back to the agent-type name.
+      for (const [id, title] of this.labels) {
+        ws.send(
+          JSON.stringify({
+            type: "label",
+            id,
+            title,
           } satisfies TerminalClientMessage),
         );
       }
