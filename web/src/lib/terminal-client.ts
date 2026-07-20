@@ -37,6 +37,9 @@ interface SubscriberEntry {
   };
 }
 
+/** Shared UTF-8 encoder for `writeText` — one instance, not one per keystroke. */
+const TEXT_ENCODER = new TextEncoder();
+
 class TerminalClient {
   /** The OPEN socket (send path), or null. */
   private ws: WebSocket | null = null;
@@ -103,6 +106,12 @@ class TerminalClient {
     this.encodeId(id, frame, 1);
     frame.set(data, 1 + TERMINAL_ID_BYTES);
     this.ws.send(frame);
+  }
+
+  /** Send a UTF-8 string to the PTY's stdin — convenience over `write` for key
+   *  sequences and pasted text (arrow/Esc keys, the touch key-bar, sends). */
+  writeText(id: string, text: string): void {
+    this.write(id, TEXT_ENCODER.encode(text));
   }
 
   resize(id: string, cols: number, rows: number): void {

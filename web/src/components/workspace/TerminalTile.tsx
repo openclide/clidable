@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { TerminalView } from "./TerminalView";
 import { Composer } from "./Composer";
+import { TerminalKeyBar } from "./TerminalKeyBar";
 import { AgentIcon } from "../icons/AgentIcon";
 import { AgentStatusIcon } from "./AgentStatusIcon";
 import {
@@ -207,6 +208,11 @@ export function TerminalTile({
             />
           </div>
           <div className="shrink-0 p-3 pt-2">
+            {/* Touch key-bar — sits ABOVE the composer box (a sibling, not inside
+                it). Every tab, agent or shell (Esc interrupts, Tab accepts, ^C
+                cancels, arrows navigate), mobile only; drives the TUI when there's
+                no physical keyboard. */}
+            <TerminalKeyBar sessionId={activeTab.instanceId} />
             {/* One composer for both — a plain terminal renders the same box in
                 `plain` mode (no checkpoints); it keeps the agent selector, so
                 you can switch the shell into a real agent in place. You can also

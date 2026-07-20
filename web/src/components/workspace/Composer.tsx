@@ -5,7 +5,7 @@ import {
   keymap,
   placeholder as cmPlaceholder,
 } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, type SelectionRange } from "@codemirror/state";
 import {
   defaultKeymap,
   history,
@@ -17,6 +17,7 @@ import { AGENTS, getAgent, type AgentId, type AgentInfo } from "../welcome/data"
 import { AgentIcon } from "../icons/AgentIcon";
 import { PositionedPortal } from "../ui/PositionedPortal";
 import { terminalClient } from "../../lib/terminal-client";
+import { composerHasNothingToSend } from "../../lib/composer-send";
 import { registerComposerFocus } from "../../lib/composer-focus";
 import {
   createCheckpoint,
@@ -35,6 +36,22 @@ import { uploadAttachment } from "../../lib/attachments-client";
 // agent TUI commits the paste before the \r lands (see sendNow). One render
 // tick is enough; this stays well below perceptible latency.
 const SUBMIT_DELAY_MS = 30;
+
+// Arrow-key "boundary fall-through": each arrow edits the draft while the caret
+// can move that way, and drives the underlying TUI (the escape sequence `seq`)
+// once it can't. `atEdge` reports that "can't move" edge — wrap-aware for the
+// vertical pair (via moveVertically), a plain doc-boundary for the horizontal.
+// The keymap (in the component, where the PTY write closure lives) maps this.
+const ARROW_TUI_KEYS: ReadonlyArray<{
+  key: string;
+  seq: string;
+  atEdge: (v: EditorView, r: SelectionRange) => boolean;
+}> = [
+  { key: "ArrowUp", seq: "\x1b[A", atEdge: (v, r) => v.moveVertically(r, false).head === r.head },
+  { key: "ArrowDown", seq: "\x1b[B", atEdge: (v, r) => v.moveVertically(r, true).head === r.head },
+  { key: "ArrowLeft", seq: "\x1b[D", atEdge: (_v, r) => r.head === 0 },
+  { key: "ArrowRight", seq: "\x1b[C", atEdge: (v, r) => r.head === v.state.doc.length },
+];
 
 /** A file attached to the outgoing message. `path` is null while the upload
  *  is in flight (or after it failed — see `error`); `previewUrl` is a local
@@ -352,15 +369,37 @@ export function Composer({
     // typed-but-unsubmitted (the intermittent bug). Capture the session id so
     // a tab switch during the gap can't redirect the Enter to another session.
     const sid = sessionIdRef.current;
-    const enc = new TextEncoder();
-    terminalClient.write(sid, enc.encode(`\x1b[200~${text}\x1b[201~`));
-    setTimeout(() => terminalClient.write(sid, enc.encode("\r")), SUBMIT_DELAY_MS);
+    terminalClient.writeText(sid, `\x1b[200~${text}\x1b[201~`);
+    setTimeout(() => terminalClient.writeText(sid, "\r"), SUBMIT_DELAY_MS);
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: "" },
     });
     setIsEmpty(true);
     clearAttachments();
     return true;
+  }
+
+  // Write a raw byte sequence straight to the active PTY so the composer can
+  // drive the underlying TUI (agent menus, shell history/autocomplete, Ctrl-C…)
+  // without the caret leaving the box. Reads the session id from the ref so a
+  // tab switch mid-keystroke can't misroute it. Used by the arrow/Esc keymap
+  // and the touch key-bar below.
+  function sendKey(seq: string): void {
+    terminalClient.writeText(sessionIdRef.current, seq);
+  }
+
+  // Enter completes the boundary fall-through: a composer with something to send
+  // sends the message (sendNow); an EMPTY one forwards a bare Enter to the TUI,
+  // so after arrow-navigating a menu / approval prompt you can confirm without
+  // leaving the box. "Empty" mirrors sendNow (blank text AND no attachments) so a
+  // pending upload still routes through sendNow rather than a stray \r.
+  function submitOrForwardEnter(): void {
+    const doc = viewRef.current?.state.doc.toString() ?? "";
+    if (composerHasNothingToSend(doc, attachmentsRef.current.length)) {
+      sendKey("\r");
+      return;
+    }
+    sendNow();
   }
 
   useEffect(() => {
@@ -380,25 +419,50 @@ export function Composer({
           // reliably the moment the view is focused.
           drawSelection(),
           keymap.of([
-            // Enter sends; Shift-Enter inserts a newline. Enter always
-            // consumes the key (returns true) so an empty composer never
-            // leaves a stray blank line. Mod-Enter stays as a send alias.
+            // Enter sends the message, or — when the box is empty — forwards a
+            // bare Enter to the TUI (confirm/approve after arrow-navigating a
+            // menu). Shift-Enter inserts a newline. Enter always consumes the key
+            // (returns true) so an empty composer never leaves a stray blank line.
             {
               key: "Enter",
               run: () => {
-                sendNow();
+                submitOrForwardEnter();
                 return true;
               },
               shift: insertNewlineAndIndent,
             },
-            // Always consume Mod-Enter too. Returning sendNow()'s false (empty
-            // buffer, or an upload in flight) would fall through to
-            // defaultKeymap's Mod-Enter → insertBlankLine, splitting the
-            // message with a stray blank line.
+            // Mod-Enter is a send alias — same behavior. Always consume it, or a
+            // false return would fall through to defaultKeymap's Mod-Enter →
+            // insertBlankLine, splitting the message with a stray blank line.
             {
               key: "Mod-Enter",
               run: () => {
-                sendNow();
+                submitOrForwardEnter();
+                return true;
+              },
+            },
+            // Arrow keys drive the underlying TUI, but only at the caret's edge
+            // ("boundary fall-through", see ARROW_TUI_KEYS): while there's text to
+            // move through, the arrow edits the draft (return false → defaultKeymap
+            // handles it); once the caret can't move that way it's sent to the PTY,
+            // so you can navigate menus / shell history without leaving the box. A
+            // non-empty selection always collapses normally (return false).
+            ...ARROW_TUI_KEYS.map(({ key, seq, atEdge }) => ({
+              key,
+              run: (v: EditorView) => {
+                const r = v.state.selection.main;
+                if (!r.empty || !atEdge(v, r)) return false;
+                sendKey(seq);
+                return true;
+              },
+            })),
+            // Escape has no in-box meaning, so it always goes to the TUI — it's
+            // the interrupt key for agents (Claude/Codex) and the escape/cancel
+            // key for shell TUIs.
+            {
+              key: "Escape",
+              run: () => {
+                sendKey("\x1b");
                 return true;
               },
             },
