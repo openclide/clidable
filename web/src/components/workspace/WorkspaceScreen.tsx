@@ -30,8 +30,9 @@ import {
   type TileTerminal,
 } from "./paneTree";
 import { TerminalDock, type DockEntry } from "./TerminalDock";
-import { fetchLayout, saveLayout as saveLayoutToServer } from "../../lib/layout";
-import type { AgentId, MockProject } from "../welcome/data";
+import { saveWorkspace, type WorkspaceFull } from "../../lib/workspaces-client";
+import { getLastAgent, type Project } from "../../lib/projects-client";
+import type { AgentId } from "../welcome/data";
 import type { WorkspaceTool } from "./WorkspaceTools";
 import { subscribeRevealChanges } from "../../lib/diff-base-store";
 import { terminalClient } from "../../lib/terminal-client";
@@ -91,8 +92,9 @@ function writeStoredPct(p: number): void {
 }
 
 interface Props {
-  project: MockProject;
-  agentId: AgentId;
+  /** Full persisted state to restore. A fresh workspace has `tree === null` and
+   *  the component seeds one terminal for its first project. */
+  workspace: WorkspaceFull;
   onBack: () => void;
 }
 
@@ -109,79 +111,158 @@ interface MinimizedTerminal {
 }
 
 /**
+ * A terminal session id, unique per PTY. Persisted long-term (it keys the
+ * durable record), so the suffix adds a short random tail to `Date.now()` —
+ * two terminals opened in the same millisecond can't collide.
+ */
+function makeInstanceId(projectId: string, aid: AgentId): string {
+  return `${projectId}-${aid}-${Date.now().toString(36)}${Math.floor(Math.random() * 1296)
+    .toString(36)
+    .padStart(2, "0")}`;
+}
+
+/** The default single-terminal tree a fresh workspace seeds. */
+function seedTree(projectId: string, agentId: AgentId): Pane {
+  return {
+    kind: "leaf",
+    id: nextPaneId(),
+    tabs: [{ projectId, agentId, instanceId: makeInstanceId(projectId, agentId) }],
+    activeTabIndex: 0,
+  };
+}
+
+/** Which project is active on restore — the stored one if it's still open, else
+ *  the first open project. */
+function initActiveProjectId(workspace: WorkspaceFull): string {
+  const active = workspace.activeProjectId;
+  if (active && workspace.projects.some((p) => p.id === active)) return active;
+  return workspace.projects[0]?.id ?? "";
+}
+
+/**
+ * Build the initial pane tree synchronously from the persisted workspace — no
+ * async hydration, so there's no throwaway-spawn flash. A stored tree is used
+ * as-is (advancing the pane-id counter past it); a null OR structurally broken
+ * tree falls back to seeding one terminal for the first project. `reservePaneIds`
+ * walks the whole tree, so it doubles as the structural check the old async path
+ * did in a try/catch.
+ */
+function initPaneRoot(workspace: WorkspaceFull, activeProjectId: string): Pane {
+  if (workspace.tree) {
+    try {
+      const tree = workspace.tree as Pane;
+      reservePaneIds(tree);
+      // Touch the tree so a malformed subtree throws here, not mid-render.
+      allLeaves(tree);
+      return tree;
+    } catch {
+      // corrupt / foreign saved tree — fall through to the seeded default
+    }
+  }
+  const first = workspace.projects.find((p) => p.id === activeProjectId) ?? workspace.projects[0];
+  return seedTree(first?.id ?? "", getLastAgent(activeProjectId));
+}
+
+/** Restore the minimized dock behind a structural guard — a malformed entry
+ *  (no tab instanceId) is dropped rather than crashing the dock. */
+function initMinimized(raw: unknown): MinimizedTerminal[] {
+  if (!Array.isArray(raw)) return [];
+  const out: MinimizedTerminal[] = [];
+  for (const m of raw) {
+    const tab = (m as { tab?: unknown })?.tab as TileTerminal | undefined;
+    const origin = (m as { origin?: unknown })?.origin as
+      | { paneId: PaneId; tabIndex: number }
+      | undefined;
+    if (
+      tab &&
+      typeof tab.instanceId === "string" &&
+      typeof tab.projectId === "string" &&
+      origin &&
+      typeof origin.paneId === "string"
+    ) {
+      out.push({ tab, origin });
+    }
+  }
+  return out;
+}
+
+/**
  * Multi-project workspace with a tmux-style pane tree. Each leaf can also
  * hold multiple tabs (multiplexed terminals in the same pane). The `+` in
  * each tile's header opens a 3-option menu: side / bottom / tab.
  *
- * Real PTY + iframe wiring lands in PLAN steps 2–3; this is mock-only.
+ * Restores its full state (open projects, pane tree, minimized dock, active
+ * project) synchronously from the `workspace` prop; every change autosaves back
+ * to the workspace registry (debounced), so reload and Back both round-trip.
  */
-export function WorkspaceScreen({ project, agentId, onBack }: Props) {
-  const [openProjects, setOpenProjects] = useState<MockProject[]>([project]);
-  const [activeProjectId, setActiveProjectId] = useState(project.id);
-
-  // Pane tree — starts as a single leaf holding one tab, with the
-  // project + agent the welcome screen launched with.
-  const [paneRoot, setPaneRoot] = useState<Pane>(() => {
-    const id = nextPaneId();
-    return {
-      kind: "leaf",
-      id,
-      tabs: [
-        {
-          projectId: project.id,
-          agentId,
-          instanceId: `${project.id}-${agentId}-1`,
-        },
-      ],
-      activeTabIndex: 0,
-    };
-  });
+export function WorkspaceScreen({ workspace, onBack }: Props) {
+  // All state restored synchronously from the persisted workspace — the open
+  // projects (in tab order, already resolved server-side), the active project,
+  // the pane tree (or a seeded default), and the minimized dock. No async
+  // hydration, so no throwaway terminal spawns before a real tree arrives.
+  const [openProjects, setOpenProjects] = useState<Project[]>(() => workspace.projects);
+  // Resolve the active project once and seed both dependent states from it.
+  const initialActiveId = useMemo(() => initActiveProjectId(workspace), [workspace]);
+  const [activeProjectId, setActiveProjectId] = useState(() => initialActiveId);
+  const [paneRoot, setPaneRoot] = useState<Pane>(() =>
+    initPaneRoot(workspace, initialActiveId),
+  );
   const [focusedPaneId, setFocusedPaneId] = useState<PaneId>(
     () => allLeaves(paneRoot)[0]!.id,
   );
-
-  // Persist the pane tree server-side so a reload (or a second client) restores
-  // the same terminals/splits instead of re-seeding a single terminal — the
-  // instanceIds are reused, so live sessions re-attach and dead ones resume.
-  // `hydratedRef` gates saving until the load has run, so the initial default
-  // can't overwrite a saved layout before it arrives.
-  const hydratedRef = useRef(false);
-  useEffect(() => {
-    hydratedRef.current = false;
-    let cancelled = false;
-    void fetchLayout(project.id).then((tree) => {
-      if (cancelled) return;
-      if (tree) {
-        try {
-          // reservePaneIds walks the whole tree, so it doubles as a structural
-          // check: a malformed subtree throws here and we keep the default
-          // layout rather than crashing the render.
-          reservePaneIds(tree); // advance the id counter past hydrated pane ids
-          setPaneRoot(tree);
-          const first = allLeaves(tree)[0];
-          if (first) setFocusedPaneId(first.id);
-        } catch {
-          // corrupt / foreign saved tree — fall back to the seeded default
-        }
-      }
-      hydratedRef.current = true;
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [project.id]);
-
-  useEffect(() => {
-    if (!hydratedRef.current) return;
-    const t = setTimeout(() => void saveLayoutToServer(project.id, paneRoot), 500);
-    return () => clearTimeout(t);
-  }, [paneRoot, project.id]);
 
   // Terminals collapsed out of the pane tree into the dock strip. Their PTY
   // sessions keep running server-side (the retain protocol below exempts
   // them from the idle-session reaper); restoring re-attaches the stream.
   // Each carries its origin so restore lands it back where it came from.
-  const [minimized, setMinimized] = useState<MinimizedTerminal[]>([]);
+  // Restored from the persisted workspace (behind a structural guard).
+  const [minimized, setMinimized] = useState<MinimizedTerminal[]>(() =>
+    initMinimized(workspace.minimized),
+  );
+
+  // Autosave the whole workspace snapshot (pane tree + open projects + active
+  // project + minimized dock) so reload and Back both round-trip. A ref holds
+  // the latest snapshot for the debounced save and the unmount flush.
+  const savePayload = useMemo(
+    () => ({
+      tree: paneRoot,
+      openProjects: openProjects.map((p) => p.id),
+      activeProjectId,
+      minimized,
+    }),
+    [paneRoot, openProjects, activeProjectId, minimized],
+  );
+  const saveRef = useRef(savePayload);
+  saveRef.current = savePayload;
+  // Skip the first autosave when we hydrated an existing tree (nothing changed
+  // yet). A freshly-seeded workspace (tree was null) DOES persist immediately so
+  // the seed sticks across an early reload.
+  const skipFirstSaveRef = useRef(workspace.tree != null);
+  useEffect(() => {
+    if (skipFirstSaveRef.current) {
+      skipFirstSaveRef.current = false;
+      return;
+    }
+    const t = setTimeout(() => void saveWorkspace(workspace.id, saveRef.current), 500);
+    return () => clearTimeout(t);
+  }, [savePayload, workspace.id]);
+  // Flush the latest snapshot on unmount (Back) so the last ≤500ms of edits
+  // aren't lost when the debounced timer is cleared. Back is an in-app view
+  // change (not a page unload), so this plain fetch completes in the background.
+  useEffect(
+    () => () => void saveWorkspace(workspace.id, saveRef.current),
+    [workspace.id],
+  );
+  // A hard page teardown — tab/window close (incl. a secondary desktop window),
+  // reload, or bfcache — is NOT a React unmount, so the flush above can be
+  // cancelled with the page. `pagehide` is the last reliable beat to save; use
+  // keepalive so the request survives the teardown.
+  useEffect(() => {
+    const flush = () =>
+      void saveWorkspace(workspace.id, saveRef.current, { keepalive: true });
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, [workspace.id]);
 
   // The dock (roster of all terminals) is hidden by default; the layout menu
   // toggles it. Minimizing anything forces it visible so nothing gets stranded.
@@ -214,7 +295,7 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
   const [mobileView, setMobileView] = useState<MobileView>("cli");
 
   const projectsById = useMemo(() => {
-    const m = new Map<string, MockProject>();
+    const m = new Map<string, Project>();
     for (const p of openProjects) m.set(p.id, p);
     return m;
   }, [openProjects]);
@@ -322,15 +403,7 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
   );
   const compact = totalTabs > 1;
 
-  // Persisted long-term (the layout is saved server-side), so the suffix adds a
-  // short random tail to Date.now() — two terminals opened in the same
-  // millisecond can't collide on the id that keys the PTY session + record.
-  const makeInstanceId = (projectId: string, aid: AgentId) =>
-    `${projectId}-${aid}-${Date.now().toString(36)}${Math.floor(Math.random() * 1296)
-      .toString(36)
-      .padStart(2, "0")}`;
-
-  const handleAddProject = (next: MockProject) => {
+  const handleAddProject = (next: Project) => {
     if (openProjects.some((p) => p.id === next.id)) {
       setActiveProjectId(next.id);
       return;
@@ -633,7 +706,9 @@ export function WorkspaceScreen({ project, agentId, onBack }: Props) {
     : "transition-[flex-basis,opacity] duration-[400ms] ease-[cubic-bezier(0.2,0.7,0.2,1)]";
 
   const activeProjectPath =
-    (openProjects.find((p) => p.id === activeProjectId) ?? project).path;
+    openProjects.find((p) => p.id === activeProjectId)?.path ??
+    openProjects[0]?.path ??
+    "~";
 
   // Shared by both shells — the dock roster under the terminal grid. Hidden by
   // default (layout-menu toggle), but forced visible while anything is

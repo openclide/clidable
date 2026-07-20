@@ -25,10 +25,9 @@ import type {
 export type ProjectAgentId = TerminalAgentId;
 
 /**
- * Client-side project view. Field names match the old `MockProject` so
- * existing consumers compile unchanged (welcome/data.ts re-exports this as
- * `MockProject`). `lastOpenedAt` maps from the API's `lastOpened`;
- * `lastAgent` is UI-derived.
+ * Client-side project view — the wire `Project` (shared/types) plus two UI
+ * conveniences: `lastOpenedAt` (renamed from the API's `lastOpened`) and the
+ * UI-derived `lastAgent`. Re-exported as `Project` from welcome/data.ts.
  */
 export interface Project {
   id: string;
@@ -73,7 +72,10 @@ export function setLastAgent(id: string, agent: ProjectAgentId): void {
   }
 }
 
-function fromApi(p: ApiProject): Project {
+/** Map a wire `Project` (shared/types) to the client view — attaching the
+ *  UI-only `lastAgent` from localStorage and renaming `lastOpened`. Exported so
+ *  workspaces-client can hydrate the projects embedded in a workspace payload. */
+export function fromApi(p: ApiProject): Project {
   return {
     id: p.id,
     name: p.name,

@@ -1,7 +1,8 @@
 /**
- * Mock data for the welcome screen. Replaced by real data from the Bun
- * backend (projects from SQLite, agents detected via `which claude` etc.)
- * once those endpoints land.
+ * Welcome-screen shared data: the agent catalog (ids, names, brand colors, SVG
+ * marks) plus small formatting helpers, and a re-export of the `Project` client
+ * view. Projects and workspaces are real, served by the Bun backend (SQLite)
+ * via lib/projects-client / lib/workspaces-client.
  *
  * Agent SVG paths are nominative-use marks of the respective vendors,
  * adapted from public sources for use in a 24×24 viewBox.
@@ -16,7 +17,8 @@ export type AgentId =
   | "qwen"
   | "kimi"
   | "opencode"
-  | "copilot";
+  | "copilot"
+  | "terminal";
 
 export interface AgentInfo {
   id: AgentId;
@@ -41,13 +43,14 @@ export const AGENTS: AgentInfo[] = [
     icon: "M21.55 10.004a5.416 5.416 0 00-.478-4.501c-1.217-2.09-3.662-3.166-6.05-2.66A5.59 5.59 0 0010.831 1C8.39.995 6.224 2.546 5.473 4.838A5.553 5.553 0 001.76 7.496a5.487 5.487 0 00.691 6.5 5.416 5.416 0 00.477 4.502c1.217 2.09 3.662 3.165 6.05 2.66A5.586 5.586 0 0013.168 23c2.443.006 4.61-1.546 5.361-3.84a5.553 5.553 0 003.715-2.66 5.488 5.488 0 00-.693-6.497v.001zm-8.381 11.558a4.199 4.199 0 01-2.675-.954c.034-.018.093-.05.132-.074l4.44-2.53a.71.71 0 00.364-.623v-6.176l1.877 1.069c.02.01.033.029.036.05v5.115c-.003 2.274-1.87 4.118-4.174 4.123zM4.192 17.78a4.059 4.059 0 01-.498-2.763c.032.02.09.055.131.078l4.44 2.53c.225.13.504.13.73 0l5.42-3.088v2.138a.068.068 0 01-.027.057L9.9 19.288c-1.999 1.136-4.552.46-5.707-1.51h-.001zM3.023 8.216A4.15 4.15 0 015.198 6.41l-.002.151v5.06a.711.711 0 00.364.624l5.42 3.087-1.876 1.07a.067.067 0 01-.063.005l-4.489-2.559c-1.995-1.14-2.679-3.658-1.53-5.63h.001zm15.417 3.54l-5.42-3.088L14.896 7.6a.067.067 0 01.063-.006l4.489 2.557c1.998 1.14 2.683 3.662 1.529 5.633a4.163 4.163 0 01-2.174 1.807V12.38a.71.71 0 00-.363-.623zm1.867-2.773a6.04 6.04 0 00-.132-.078l-4.44-2.53a.731.731 0 00-.729 0l-5.42 3.088V7.325a.068.068 0 01.027-.057L14.1 4.713c2-1.137 4.555-.46 5.707 1.513.487.833.664 1.809.499 2.757h.001zm-11.741 3.81l-1.877-1.068a.065.065 0 01-.036-.051V6.559c.001-2.277 1.873-4.122 4.181-4.12.976 0 1.92.338 2.671.954-.034.018-.092.05-.131.073l-4.44 2.53a.71.71 0 00-.365.623l-.003 6.173v.002zm1.02-2.168L12 9.25l2.414 1.375v2.75L12 14.75l-2.415-1.375v-2.75z",
   },
   {
-    // Antigravity CLI (`agy`) — Google's successor to the Gemini CLI.
-    // NOTE: placeholder brand color + mark (a simple "anti-gravity" up-arrow);
-    // swap `color`/`icon` for the official Antigravity logo when available.
+    // Antigravity (`agy`) — Google's agent-first IDE, successor to the Gemini
+    // CLI. Official boomerang / "A" mark (single path, 24×24); brand blue taken
+    // from the logo's multicolor gradient. Nominative use, adapted from the
+    // public mark.
     id: "antigravity",
     name: "Antigravity CLI",
-    color: "#4F86F7",
-    icon: "M12 2L4 12h5v8h6v-8h5z",
+    color: "#3186FF",
+    icon: "M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z",
   },
   {
     id: "cursor",
@@ -79,13 +82,20 @@ export const AGENTS: AgentInfo[] = [
     color: "#6E40C9",
     icon: "M19.245 5.364c1.322 1.36 1.877 3.216 2.11 5.817.622 0 1.2.135 1.592.654l.73.964c.21.278.323.61.323.955v2.62c0 .339-.173.669-.453.868C20.239 19.602 16.157 21.5 12 21.5c-4.6 0-9.205-2.583-11.547-4.258-.28-.2-.452-.53-.453-.868v-2.62c0-.345.113-.679.321-.956l.73-.963c.392-.517.974-.654 1.593-.654l.029-.297c.25-2.446.81-4.213 2.082-5.52 2.461-2.54 5.71-2.851 7.146-2.864h.198c1.436.013 4.685.323 7.146 2.864zm-7.244 4.328c-.284 0-.613.016-.962.05-.123.447-.305.85-.57 1.108-1.05 1.023-2.316 1.18-2.994 1.18-.638 0-1.306-.13-1.851-.464-.516.165-1.012.403-1.044.996a65.882 65.882 0 00-.063 2.884l-.002.48c-.002.563-.005 1.126-.013 1.69.002.326.204.63.51.765 2.482 1.102 4.83 1.657 6.99 1.657 2.156 0 4.504-.555 6.985-1.657a.854.854 0 00.51-.766c.03-1.682.006-3.372-.076-5.053-.031-.596-.528-.83-1.046-.996-.546.333-1.212.464-1.85.464-.677 0-1.942-.157-2.993-1.18-.266-.258-.447-.661-.57-1.108-.32-.032-.64-.049-.96-.05zm-2.525 4.013c.539 0 .976.426.976.95v1.753c0 .525-.437.95-.976.95a.964.964 0 01-.976-.95v-1.752c0-.525.437-.951.976-.951zm5 0c.539 0 .976.426.976.95v1.753c0 .525-.437.95-.976.95a.964.964 0 01-.976-.95v-1.752c0-.525.437-.951.976-.951zM7.635 5.087c-1.05.102-1.935.438-2.385.906-.975 1.037-.765 3.668-.21 4.224.405.394 1.17.657 1.995.657h.09c.649-.013 1.785-.176 2.73-1.11.435-.41.705-1.433.675-2.47-.03-.834-.27-1.52-.63-1.813-.39-.336-1.275-.482-2.265-.394zm6.465.394c-.36.292-.6.98-.63 1.813-.03 1.037.24 2.06.675 2.47.968.957 2.136 1.104 2.776 1.11h.044c.825 0 1.59-.263 1.995-.657.555-.556.765-3.187-.21-4.224-.45-.468-1.335-.804-2.385-.906-.99-.088-1.875.058-2.265.394zM12 7.615c-.24 0-.525.015-.84.044.03.16.045.336.06.526l-.001.159a2.94 2.94 0 01-.014.25c.225-.022.425-.027.612-.028h.366c.187 0 .387.006.612.028-.015-.146-.015-.277-.015-.409.015-.19.03-.365.06-.526a9.29 9.29 0 00-.84-.044z",
   },
+  {
+    // A plain login shell, not an AI agent. Neutral slate + a `>_` command-prompt
+    // mark (two filled subpaths: chevron + cursor bar).
+    id: "terminal",
+    name: "Terminal",
+    color: "#8B949E",
+    icon: "M7 5 L13 12 L7 19 L5.2 17.4 L9.6 12 L5.2 6.6 Z M13.5 15.2 h4 a0.8 0.8 0 010 1.6 h-4 a0.8 0.8 0 010 -1.6 Z",
+  },
 ];
 
-// Projects now come from the real `/api/projects` backend. `Project` (the
-// client view) lives in lib/projects-client; `MockProject` is kept as a
-// deprecated alias so existing consumers compile unchanged. New code should
-// import `Project` directly from lib/projects-client.
-export type { Project, Project as MockProject } from "../../lib/projects-client";
+// Projects come from the real `/api/projects` backend. `Project` (the client
+// view) lives in lib/projects-client and is re-exported here for the welcome
+// components that pair it with the agent catalog above.
+export type { Project } from "../../lib/projects-client";
 
 export function getAgent(id: string): AgentInfo {
   const a = AGENTS.find((x) => x.id === migrateAgentId(id));

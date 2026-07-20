@@ -14,6 +14,7 @@
  * is just the last-known location, refreshed on each open.
  */
 import { stat } from "node:fs/promises";
+import { Database } from "bun:sqlite";
 import { openDb } from "../db";
 import { ensureProjectUuid } from "../checkpoints/project";
 import { detectProject } from "./detect";
@@ -52,14 +53,34 @@ export function listProjects(): Project[] {
   return rows.map(rowToProject);
 }
 
-export function getProject(id: string): Project | null {
-  const db = openDb();
+export function getProject(id: string, db: Database = openDb()): Project | null {
   const row = db
     .query<ProjectRow, [string]>(
       `SELECT ${SELECT_COLS} FROM projects WHERE id = ? LIMIT 1`,
     )
     .get(id);
   return row ? rowToProject(row) : null;
+}
+
+/**
+ * Batch-resolve many project ids in a single query → a `Map<id, Project>` (ids
+ * with no registered project are simply absent). Lets callers that hold a list
+ * of ids (e.g. a workspace's open projects) avoid an N+1 of `getProject`.
+ */
+export function getProjectsByIds(
+  ids: string[],
+  db: Database = openDb(),
+): Map<string, Project> {
+  const map = new Map<string, Project>();
+  if (ids.length === 0) return map;
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = db
+    .query<ProjectRow, string[]>(
+      `SELECT ${SELECT_COLS} FROM projects WHERE id IN (${placeholders})`,
+    )
+    .all(...ids);
+  for (const r of rows) map.set(r.id, rowToProject(r));
+  return map;
 }
 
 /**

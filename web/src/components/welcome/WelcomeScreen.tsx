@@ -2,25 +2,28 @@ import { useState } from "react";
 import logoUrl from "../../../logo.png";
 import packageJson from "../../../../package.json" with { type: "json" };
 import { AgentRow } from "./AgentRow";
-import { RecentProjects } from "./RecentProjects";
+import { RecentWorkspaces } from "./RecentWorkspaces";
 import { AgentProjectModal } from "./AgentProjectModal";
 import { NewProjectModal } from "./NewProjectModal";
 import { FolderPickerModal } from "../workspace/FolderPickerModal";
 import { GlassPanel } from "../ui/GlassPanel";
 import { isTauri } from "../../lib/shell";
 import { openProject } from "../../lib/projects-client";
-import type { AgentId, MockProject } from "./data";
+import type { AgentId, Project } from "./data";
 
-/** Agent a project gets when opened/created from the Recent-projects panel
- *  without first picking one. Matches projects-client's lastAgent default; the
- *  user can switch agents in the workspace composer afterward. */
+/** Agent a project gets when opened/created from the workspaces panel without
+ *  first picking one. Matches projects-client's lastAgent default; the user can
+ *  switch agents in the workspace composer afterward. */
 const DEFAULT_AGENT: AgentId = "claude";
 
 interface Props {
-  onOpenProject: (project: MockProject, agentId: AgentId) => void;
+  /** Open/create/pick-agent on a project → start a fresh workspace for it. */
+  onNewProject: (project: Project, agentId: AgentId) => void;
+  /** Resume a saved workspace from the list → restore its full state. */
+  onResumeWorkspace: (workspaceId: string) => void;
 }
 
-export function WelcomeScreen({ onOpenProject }: Props) {
+export function WelcomeScreen({ onNewProject, onResumeWorkspace }: Props) {
   const [pickedAgent, setPickedAgent] = useState<AgentId | null>(null);
   // Agent the New-Project wizard is creating for (null = wizard closed).
   const [createAgent, setCreateAgent] = useState<AgentId | null>(null);
@@ -37,7 +40,7 @@ export function WelcomeScreen({ onOpenProject }: Props) {
     try {
       const project = await openProject(path);
       setOpenPickerOpen(false);
-      onOpenProject(project, project.lastAgent);
+      onNewProject(project, project.lastAgent);
     } catch (e) {
       setOpenError((e as Error).message);
     } finally {
@@ -100,16 +103,16 @@ export function WelcomeScreen({ onOpenProject }: Props) {
           <AgentRow onPick={setPickedAgent} />
         </GlassPanel>
 
-        {/* Recent projects */}
+        {/* Workspaces */}
         <GlassPanel
           className="mt-5"
           padding="p-5"
-          title="Recent projects"
-          subtitle="Click to resume with the agent it last used"
+          title="Workspaces"
+          subtitle="Click to resume — terminals, splits, and agents come back"
           style={{ animation: "enter-up 360ms 160ms cubic-bezier(0.2,0.7,0.2,1) both" }}
         >
-          <RecentProjects
-            onOpen={(p) => onOpenProject(p, p.lastAgent)}
+          <RecentWorkspaces
+            onOpen={onResumeWorkspace}
             onOpenFolder={() => setOpenPickerOpen(true)}
             onCreate={() => setCreateAgent(DEFAULT_AGENT)}
           />
@@ -134,7 +137,7 @@ export function WelcomeScreen({ onOpenProject }: Props) {
         onClose={() => setPickedAgent(null)}
         onPickProject={(p, id) => {
           setPickedAgent(null);
-          onOpenProject(p, id);
+          onNewProject(p, id);
         }}
         onCreateProject={(id) => {
           setPickedAgent(null);
@@ -143,13 +146,13 @@ export function WelcomeScreen({ onOpenProject }: Props) {
       />
 
       {/* New-project wizard — opens from the agent modal's "Create new" and
-          the Recent-projects "Create a project" action. */}
+          the workspaces panel's "Create a project" action. */}
       <NewProjectModal
         agentId={createAgent}
         onClose={() => setCreateAgent(null)}
         onCreated={(project, id) => {
           setCreateAgent(null);
-          onOpenProject(project, id);
+          onNewProject(project, id);
         }}
       />
 

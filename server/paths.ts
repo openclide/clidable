@@ -39,6 +39,9 @@ export const paths = {
   // Holds the generated `clidable` shim; prepended to spawned-agent PATHs so AI
   // Team delegation (`clidable team delegate …`) resolves inside Clidable.
   bin: join(base.data, "bin"),
+  // Singleton daemon PID lockfile — {pid, port} written by the server on boot,
+  // read by `clidable open`/`stop` to attach to or stop the running server.
+  serverLock: join(base.data, "server.lock"),
 } as const;
 
 /**

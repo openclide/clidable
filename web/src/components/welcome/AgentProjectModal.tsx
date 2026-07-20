@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { Modal } from "../ui/Modal";
 import { AgentIcon } from "../icons/AgentIcon";
-import { relativeTime, getAgent, type AgentId, type MockProject } from "./data";
+import { relativeTime, getAgent, type AgentId, type Project } from "./data";
 import { openProject, useProjects } from "../../lib/projects-client";
 import { FolderPickerModal } from "../workspace/FolderPickerModal";
 
 interface Props {
   agentId: AgentId | null;
   onClose: () => void;
-  onPickProject: (project: MockProject, agentId: AgentId) => void;
+  onPickProject: (project: Project, agentId: AgentId) => void;
   onCreateProject: (agentId: AgentId) => void;
 }
 

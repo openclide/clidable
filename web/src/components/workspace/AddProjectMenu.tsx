@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { relativeTime, type MockProject } from "../welcome/data";
+import { relativeTime, type Project } from "../welcome/data";
 import { openProject, useProjects } from "../../lib/projects-client";
 import { FolderPickerModal } from "./FolderPickerModal";
 import { NewProjectModal } from "../welcome/NewProjectModal";
 
 interface Props {
   excludeIds: string[];
-  onPick: (project: MockProject) => void;
+  onPick: (project: Project) => void;
   onClose: () => void;
   anchorRef: React.RefObject<HTMLElement | null>;
 }

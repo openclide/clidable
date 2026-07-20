@@ -9,7 +9,7 @@ import {
   getAgent,
   shortAgentName,
   type AgentId,
-  type MockProject,
+  type Project,
 } from "../welcome/data";
 import { PositionedPortal } from "../ui/PositionedPortal";
 import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
@@ -26,8 +26,8 @@ import type { LeafPane, TileTerminal } from "./paneTree";
 
 interface Props {
   leaf: LeafPane;
-  projectsById: Map<string, MockProject>;
-  openProjects: MockProject[];
+  projectsById: Map<string, Project>;
+  openProjects: Project[];
   /** Default project for the new-terminal picker (the active project tab). */
   activeProjectId: string;
   focused: boolean;
@@ -207,6 +207,10 @@ export function TerminalTile({
             />
           </div>
           <div className="shrink-0 p-3 pt-2">
+            {/* One composer for both — a plain terminal renders the same box in
+                `plain` mode (no checkpoints); it keeps the agent selector, so
+                you can switch the shell into a real agent in place. You can also
+                type straight into the xterm above. */}
             <Composer
               agentId={activeTab.agentId}
               sessionId={activeTab.instanceId}
@@ -216,6 +220,7 @@ export function TerminalTile({
               projectName={multiProject ? activeProject.name : undefined}
               projectTinted={multiProject && isTinted(activeProject.name)}
               compact={compact}
+              plain={activeTab.agentId === "terminal"}
               onSelectAgent={(nextAgentId) => {
                 if (nextAgentId === activeTab.agentId) return;
                 onPickForTab(activeIndex, {
@@ -623,7 +628,7 @@ function EmptyTile({
   onDropTerminal,
   onClose,
 }: {
-  openProjects: MockProject[];
+  openProjects: Project[];
   activeProjectId: string;
   mobile?: boolean;
   onPick: (next: { projectId: string; agentId: AgentId }) => void;
@@ -746,7 +751,7 @@ function EmptyPicker({
   activeProjectId,
   onPick,
 }: {
-  openProjects: MockProject[];
+  openProjects: Project[];
   activeProjectId: string;
   onPick: (next: { projectId: string; agentId: AgentId }) => void;
 }) {
@@ -817,8 +822,8 @@ function ProjectChip({
   selected,
   onSelect,
 }: {
-  openProjects: MockProject[];
-  selected: MockProject;
+  openProjects: Project[];
+  selected: Project;
   onSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);

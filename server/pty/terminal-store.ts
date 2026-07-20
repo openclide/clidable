@@ -1,7 +1,7 @@
 /**
  * Durable terminal records — the persisted RECORD half of a session (the
  * ephemeral PTY RUNTIME half lives in the in-memory SessionManager). Backed by
- * the SQLite `terminals` + `workspace_layout` tables.
+ * the SQLite `terminals` table.
  *
  *   upsertTerminal(input)          → insert on spawn / refresh + un-dormant on re-attach
  *   setAgentRef(id, ref)           → record the agent's own session ref (from its SessionStart hook)
@@ -11,8 +11,9 @@
  *   getTerminal(id)                → single lookup
  *   listTerminals(projectUuid)     → a project's terminals, most-recently-active first
  *   deleteTerminal(id)             → forget a terminal (explicit close/kill)
- *   saveLayout / loadLayout / clearLayout(projectUuid)
- *                                  → the server-authoritative pane tree (JSON blob)
+ *
+ * The pane tree / layout is no longer stored here — it moved to the `workspaces`
+ * table (see server/workspaces), which persists the whole multi-project session.
  *
  * Every function takes an optional `db` (defaults to the shared connection) so
  * the store is unit-testable against an in-memory database.
@@ -159,34 +160,4 @@ export function listTerminals(projectUuid: string, db: Database = openDb()): Ter
 
 export function deleteTerminal(id: string, db: Database = openDb()): void {
   db.query(`DELETE FROM terminals WHERE id = ?`).run(id);
-}
-
-/** Persist a project's pane tree (server-authoritative layout). */
-export function saveLayout(projectUuid: string, tree: unknown, db: Database = openDb()): void {
-  db.query(
-    `INSERT INTO workspace_layout (project_uuid, tree, updated_at)
-       VALUES (?, ?, ?)
-     ON CONFLICT(project_uuid) DO UPDATE SET
-       tree       = excluded.tree,
-       updated_at = excluded.updated_at`,
-  ).run(projectUuid, JSON.stringify(tree), Date.now());
-}
-
-/** Load a project's saved pane tree, or null if none / corrupt. */
-export function loadLayout(projectUuid: string, db: Database = openDb()): unknown | null {
-  const row = db
-    .query<{ tree: string }, [string]>(
-      `SELECT tree FROM workspace_layout WHERE project_uuid = ? LIMIT 1`,
-    )
-    .get(projectUuid);
-  if (!row) return null;
-  try {
-    return JSON.parse(row.tree);
-  } catch {
-    return null;
-  }
-}
-
-export function clearLayout(projectUuid: string, db: Database = openDb()): void {
-  db.query(`DELETE FROM workspace_layout WHERE project_uuid = ?`).run(projectUuid);
 }

@@ -1,16 +1,16 @@
 import { useRef, useState } from "react";
-import type { MockProject } from "../welcome/data";
+import type { Project } from "../welcome/data";
 import { WORKSPACE_TOOLS, type WorkspaceTool } from "./WorkspaceTools";
 import { AddProjectMenu } from "./AddProjectMenu";
 import { PositionedPortal } from "../ui/PositionedPortal";
 import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
 
 interface Props {
-  openProjects: MockProject[];
+  openProjects: Project[];
   activeProjectId: string;
   onSelectProject: (id: string) => void;
   onCloseProject: (id: string) => void;
-  onAddProject: (project: MockProject) => void;
+  onAddProject: (project: Project) => void;
   onBack: () => void;
   onOpenTool: (tool: WorkspaceTool) => void;
 }

@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import { TerminalTile } from "./TerminalTile";
 import type { LeafPane, Pane, PaneId } from "./paneTree";
-import type { AgentId, MockProject } from "../welcome/data";
+import type { AgentId, Project } from "../welcome/data";
 
 interface Props {
   root: Pane;
-  projectsById: Map<string, MockProject>;
-  openProjects: MockProject[];
+  projectsById: Map<string, Project>;
+  openProjects: Project[];
   /** Default project for new-terminal pickers (the active project tab). */
   activeProjectId: string;
   focusedId: PaneId;

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MockProject } from "../welcome/data";
+import type { Project } from "../welcome/data";
 import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
 
 interface Props {
-  projects: MockProject[];
+  projects: Project[];
   activeId: string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;

@@ -9,9 +9,28 @@
  * lookup (cache lives for the process lifetime).
  */
 import { existsSync } from "node:fs";
+import { userInfo } from "node:os";
 import { isAbsolute } from "node:path";
 import { migrateAgentId } from "../shared/types";
 import type { TerminalAgentId } from "../shared/types";
+
+/**
+ * The user's login shell for the plain-terminal agent. `$SHELL` when set; else
+ * the account's shell from the passwd entry (`userInfo().shell`) — critical for
+ * a Finder/Dock-launched desktop app, whose sidecar inherits the launchd env
+ * that usually has NO `$SHELL`, so we'd otherwise fall back to bash instead of
+ * the user's real shell (zsh on modern macOS). Last resort: a platform default.
+ */
+function loginShell(): string {
+  if (process.env.SHELL) return process.env.SHELL;
+  try {
+    const s = userInfo().shell; // getpwuid → the account's login shell
+    if (s) return s;
+  } catch {
+    // userInfo can throw in some sandboxes/containers
+  }
+  return process.platform === "win32" ? "powershell.exe" : "/bin/zsh";
+}
 
 export interface AgentSpec {
   id: TerminalAgentId;
@@ -95,6 +114,21 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     args: [],
     env: {},
     installHint: "npm i -g @github/copilot",
+  },
+  // A plain terminal — the user's login shell, not an AI agent. `bin` resolves
+  // to their real shell (see loginShell); it's an absolute path, so it's used
+  // as-is and always counts as "installed". `-l` runs it as an interactive login
+  // shell — the Terminal.app convention: for zsh (the macOS default) that sources
+  // .zprofile (PATH) AND .zshrc (aliases); it's needed so the packaged app's
+  // sidecar — which has a minimal env — picks up the user's PATH. No hook
+  // adapter, so no hooks/resume/status are wired for it.
+  terminal: {
+    id: "terminal",
+    name: "Terminal",
+    bin: loginShell(),
+    args: process.platform === "win32" ? [] : ["-l"],
+    env: {},
+    installHint: "Uses your login shell.",
   },
 };
 

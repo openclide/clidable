@@ -20,8 +20,13 @@ path = "src/main.rs"
 tauri-build = { version = "2.6", features = [] }
 
 [dependencies]
-tauri = { version = "2.11", features = ["macos-private-api"] }
+tauri = { version = "2.11", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-shell = "2.3"
+# Single-instance: forward a CLI launch (`clidable open <dir>`) into the running
+# app so it opens a window for that directory instead of booting a second app.
+tauri-plugin-single-instance = "2.4"
+# Percent-encode a filesystem path into the `?cwd=` deep-link.
+urlencoding = "2.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

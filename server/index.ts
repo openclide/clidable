@@ -16,6 +16,8 @@ import landing from "../web/landing.html";
 import { parseConfig } from "./cli";
 import { ensureDirs, paths } from "./paths";
 import { ensureClidableShim } from "./cli-shim";
+import { runOpenCommand, runStopCommand } from "./launch/command";
+import { clearLock, serverPort, writeLock } from "./launch/daemon";
 import { openDb } from "./db";
 import { setReportPort } from "./pty/hook-report";
 import { agentsHandler } from "./routes/agents";
@@ -39,7 +41,14 @@ import {
   contextStarterHandler,
 } from "./routes/context";
 import { gitDiffHandler, gitStatusHandler } from "./routes/git";
-import { layoutGetHandler, layoutSaveHandler } from "./routes/layout";
+import {
+  workspaceCreateHandler,
+  workspaceGetHandler,
+  workspaceRemoveHandler,
+  workspaceSaveHandler,
+  workspaceTouchHandler,
+  workspacesListHandler,
+} from "./routes/workspaces";
 import { healthHandler } from "./routes/health";
 import {
   mcpAddHandler,
@@ -116,6 +125,11 @@ import {
     plugins: runPluginsCommand,
     instructions: runContextCommand,
     team: runTeamCommand,
+    // Launch a UI for a directory (app if installed, else browser) / stop the
+    // background server. These ensure-or-attach to the singleton server and exit
+    // WITHOUT booting one themselves.
+    open: runOpenCommand,
+    stop: runStopCommand,
   };
   let hit: { idx: number; tok: string } | null = null;
   for (const tok of [...Object.keys(REEXEC), ...Object.keys(COMMANDS)]) {
@@ -214,7 +228,14 @@ const websocketDispatcher: WebSocketHandler<WSSocketData> = {
   },
 };
 
-const server = serve({
+// Singleton guard: exactly one server owns the port. If it's already taken,
+// another Clidable server is running — attach to THAT instead of double-booting.
+// serve() throws synchronously on EADDRINUSE; an UNcaught throw here would only
+// print while the HTML-import bundler keeps the loop alive, so the process would
+// hang looking frozen (same hazard parseConfig guards above). Exit cleanly.
+let server: Server<WSSocketData>;
+try {
+  server = serve({
   port: config.port,
   hostname: config.bind,
 
@@ -243,7 +264,11 @@ const server = serve({
     "/api/projects/dev-server": { GET: projectDevStatusHandler },
     "/api/projects/dev-server/start": { POST: projectDevStartHandler },
     "/api/projects/dev-server/stop": { POST: projectDevStopHandler },
-    "/api/projects/layout": { GET: layoutGetHandler, PUT: layoutSaveHandler },
+    "/api/workspaces": { GET: workspacesListHandler, POST: workspaceCreateHandler },
+    "/api/workspaces/get": { GET: workspaceGetHandler },
+    "/api/workspaces/save": { PUT: workspaceSaveHandler },
+    "/api/workspaces/touch": { POST: workspaceTouchHandler },
+    "/api/workspaces/remove": { POST: workspaceRemoveHandler },
     "/api/attachments": { POST: attachmentUploadHandler },
     "/api/fs/list": { GET: fsListHandler },
     "/api/fs/browse": { GET: fsBrowseHandler },
@@ -381,7 +406,41 @@ const server = serve({
     console.error("[server] unhandled error:", err);
     return new Response("Internal error", { status: 500 });
   },
-});
+  });
+} catch (e) {
+  const code = (e as { code?: string })?.code;
+  if (code === "EADDRINUSE" || /EADDRINUSE|address already in use|in use/i.test(String((e as Error)?.message ?? e))) {
+    console.log(
+      `[clidable] port ${config.port} is already serving Clidable — attaching to it (not starting a second server).`,
+    );
+    process.exit(0);
+  }
+  throw e;
+}
+
+// This process now owns the port — register the singleton {pid,port} lockfile so
+// `clidable open`/`stop` (and the desktop tray's Quit) can find and stop it.
+// ONLY the canonical server (the one on the machine's expected port) owns the
+// lock: a secondary server explicitly bound to a different `--port` must not
+// clobber the canonical server's {pid,port} — nor clear it on its own exit —
+// or `stop`/Quit would lose the real target. `serverPort()` is the env-derived
+// canonical port; `config.port` diverges only when `--port` overrides it.
+const isCanonicalServer = config.port === serverPort();
+if (isCanonicalServer) writeLock(config.port);
+// Register the shutdown handlers exactly once. `bun --hot` re-evaluates this
+// module on every reload within the SAME process, so an unguarded `process.on`
+// would stack a new pair of listeners each time (MaxListenersExceededWarning).
+// A globalThis flag persists across those re-evals.
+const g = globalThis as { __clidableShutdownWired?: boolean };
+if (!g.__clidableShutdownWired) {
+  g.__clidableShutdownWired = true;
+  const shutdown = () => {
+    if (isCanonicalServer) clearLock();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
 
 console.log(
   `[clidable] listening on http://${config.bind}:${config.port}` +

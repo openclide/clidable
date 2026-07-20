@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AgentStatusIcon } from "./AgentStatusIcon";
-import { getAgent, shortAgentName, type MockProject } from "../welcome/data";
+import { getAgent, shortAgentName, type Project } from "../welcome/data";
 import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
 import {
   hasTerminalDrag,
@@ -22,8 +22,8 @@ export interface DockEntry {
 interface Props {
   /** Every terminal in the workspace — live tabs first, then minimized. */
   entries: DockEntry[];
-  projectsById: Map<string, MockProject>;
-  openProjects: MockProject[];
+  projectsById: Map<string, Project>;
+  openProjects: Project[];
   /** Instance ids currently on screen (active tab of a rendered pane), shown
    *  highlighted so the roster reflects where you are. */
   visibleIds: Set<string>;

@@ -23,3 +23,6 @@ Thumbs.db
 
 # Tauri build artefacts (and src-tauri/.gitignore covers target/ + gen/)
 docs-site/
+
+# Tauri sidecar binaries (built from the Bun server; see scripts/build-sidecar.ts)
+src-tauri/binaries/

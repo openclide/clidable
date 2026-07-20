@@ -102,6 +102,38 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE projects ADD COLUMN framework TEXT;
   `,
+
+  // 3 → 4: workspaces. The persisted unit is now a WORKSPACE — the whole
+  // multi-project session snapshot (its ordered open projects, the pane tree,
+  // the minimized-terminals dock, the active project) — not a single project's
+  // layout. A 1-project workspace is the common case and behaves like the old
+  // single-project layout did. `workspace_layout` (one tree per project) is
+  // superseded and dropped; it landed unshipped last commit, so no data to keep.
+  //   • open_projects — JSON ordered [projectId,…]; the tab order, distinct from
+  //     the tree's leaf order (a project can be open with all its terminals
+  //     minimized, i.e. absent from the tree).
+  //   • tree / minimized — opaque JSON blobs the client owns (Pane / Minimized-
+  //     Terminal[]); the server round-trips them and only walks them to collect
+  //     terminal ids on delete. NULL tree = fresh workspace the client seeds.
+  //   • name — optional user override; NULL means the client derives the label
+  //     from the resolved projects (so a project rename is reflected live).
+  `
+  CREATE TABLE IF NOT EXISTS workspaces (
+    id             TEXT PRIMARY KEY,        -- crypto.randomUUID()
+    name           TEXT,                    -- user override | NULL (client derives)
+    tree           TEXT,                    -- JSON Pane | NULL (fresh → client seeds)
+    open_projects  TEXT NOT NULL,           -- JSON ordered [projectId,…] (tab order)
+    active_project TEXT,                    -- projectId | NULL
+    minimized      TEXT,                    -- JSON MinimizedTerminal[] | NULL
+    created_at     INTEGER NOT NULL,        -- ms since epoch
+    last_opened    INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS workspaces_last_opened
+    ON workspaces (last_opened DESC);
+
+  DROP TABLE IF EXISTS workspace_layout;
+  `,
 ];
 
 export function openDb(): Database {

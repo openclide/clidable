@@ -1,13 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import {
-  clearLayout,
   deleteTerminal,
   getTerminal,
   listTerminals,
-  loadLayout,
   markDormant,
-  saveLayout,
   setAgentRef,
   setTitle,
   touchTerminal,
@@ -23,9 +20,6 @@ function freshDb(): Database {
       cwd TEXT NOT NULL, agent_ref TEXT, title TEXT,
       created_at INTEGER NOT NULL, last_active INTEGER NOT NULL,
       dormant INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE workspace_layout (
-      project_uuid TEXT PRIMARY KEY, tree TEXT NOT NULL, updated_at INTEGER NOT NULL
     );
   `);
   return d;
@@ -108,18 +102,5 @@ describe("terminals — list & delete", () => {
     upsertTerminal({ id: "t1", projectUuid: "p1", agentId: "claude", cwd: "/x" }, db);
     deleteTerminal("t1", db);
     expect(getTerminal("t1", db)).toBeNull();
-  });
-});
-
-describe("workspace layout", () => {
-  it("saves, loads, overwrites, and clears the pane tree", () => {
-    const db = freshDb();
-    expect(loadLayout("p1", db)).toBeNull();
-    saveLayout("p1", { kind: "leaf", id: "L1" }, db);
-    expect(loadLayout("p1", db)).toEqual({ kind: "leaf", id: "L1" });
-    saveLayout("p1", { kind: "split" }, db); // overwrite (one row per project)
-    expect(loadLayout("p1", db)).toEqual({ kind: "split" });
-    clearLayout("p1", db);
-    expect(loadLayout("p1", db)).toBeNull();
   });
 });

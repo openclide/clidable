@@ -65,6 +65,9 @@ interface Props {
   /** Switch this terminal's agent (replaces the session). Omit to render the
    *  agent identity as a static, non-interactive chip. */
   onSelectAgent?: (agentId: AgentId) => void;
+  /** Plain-terminal mode: same box, but no agent identity and no checkpoints
+   *  (a shell has neither) — the editor + send stay. */
+  plain?: boolean;
 }
 
 /**
@@ -83,6 +86,7 @@ export function Composer({
   projectTinted = false,
   compact = false,
   onSelectAgent,
+  plain = false,
 }: Props) {
   const agent = getAgent(agentId);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -234,6 +238,8 @@ export function Composer({
   );
   useEffect(() => {
     let cancelled = false;
+    // A plain terminal has no checkpoints chip — skip the fetch entirely.
+    if (plain) return;
     // Refresh on project change. Skip if we already have a cached
     // recent for this project (covers cross-tile remounts).
     const cached = getCachedMostRecent(projectPath);
@@ -251,21 +257,26 @@ export function Composer({
     return () => {
       cancelled = true;
     };
-  }, [projectPath]);
+  }, [projectPath, plain]);
   // Live updates for the relative time. `relativeTime` is pure, so we
   // re-render every 30s to bump "2m ago" → "3m ago" without an extra
   // server hop. Cheap because we only re-render the composer footer.
   const [, forceTick] = useState(0);
   useEffect(() => {
-    if (lastCheckpointAt === null) return;
+    // No chip in plain mode → nothing to keep ticking (and a cached recent
+    // could seed lastCheckpointAt non-null, so guard on plain too).
+    if (plain || lastCheckpointAt === null) return;
     const id = setInterval(() => forceTick((n) => n + 1), 30_000);
     return () => clearInterval(id);
-  }, [lastCheckpointAt]);
+  }, [lastCheckpointAt, plain]);
   // Subscribe to creates so the label updates the moment a Send fires
   // its checkpoint — including from this composer itself — and pulse the
   // rewind button as the "saved" confirmation. Filter to events for THIS
   // project so other tiles' sends don't bump us.
   useEffect(() => {
+    // Plain terminals don't checkpoint, so there's nothing to reflect — skip
+    // the subscription (and its wasted setSaved pulses from same-project sends).
+    if (plain) return;
     return subscribeToCheckpointCreates((event) => {
       if (event.projectPath !== projectPathRef.current) return;
       setLastCheckpointAt((prev) =>
@@ -274,13 +285,13 @@ export function Composer({
           : prev,
       );
       // Pulse the rewind button + swap its label to "Checkpointed" for a
-      // beat. setState/ref are stable, so this closure is safe with the []
-      // deps below.
+      // beat. setState/ref are stable, so this closure only re-subscribes when
+      // `plain` flips (e.g. switching a shell into a real agent).
       setSaved(true);
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
       savedTimerRef.current = setTimeout(() => setSaved(false), 1200);
     });
-  }, []);
+  }, [plain]);
 
   function sendNow(): boolean {
     const view = viewRef.current;
@@ -312,19 +323,23 @@ export function Composer({
     // On success the rewind button pulses (driven by the create pub-sub
     // subscription above), so there's nothing to do here but surface a
     // failure. The chip is the error channel only.
-    void (async () => {
-      const screenshot = (await capturePreview()) ?? undefined;
-      return createCheckpoint({
-        projectPath: projectPathRef.current,
-        agentId: agentIdRef.current,
-        terminalId: sessionIdRef.current,
-        message: text,
-        screenshot,
+    // A plain terminal isn't checkpointed — a shell command isn't a project
+    // snapshot boundary — so skip the snapshot entirely.
+    if (!plain) {
+      void (async () => {
+        const screenshot = (await capturePreview()) ?? undefined;
+        return createCheckpoint({
+          projectPath: projectPathRef.current,
+          agentId: agentIdRef.current,
+          terminalId: sessionIdRef.current,
+          message: text,
+          screenshot,
+        });
+      })().catch((err: Error) => {
+        console.error("[composer] checkpoint failed", err);
+        flashChip("error", err.message ?? "Checkpoint failed");
       });
-    })().catch((err: Error) => {
-      console.error("[composer] checkpoint failed", err);
-      flashChip("error", err.message ?? "Checkpoint failed");
-    });
+    }
 
     // Bracketed paste, then submit — sent as TWO writes. The paste wrapper
     // (\x1b[200~ … \x1b[201~) makes the TUI treat the whole buffer as one
@@ -424,7 +439,11 @@ export function Composer({
               return false;
             },
           }),
-          cmPlaceholder(`Message ${agent.name}…  ↵ send · ⇧↵ newline`),
+          cmPlaceholder(
+            plain
+              ? "Type a command…  ↵ run · ⇧↵ newline"
+              : `Message ${agent.name}…  ↵ send · ⇧↵ newline`,
+          ),
           EditorView.contentAttributes.of({ spellcheck: "false" }),
           EditorView.theme(
             {
@@ -557,17 +576,23 @@ export function Composer({
       <div ref={containerRef} />
 
       <div className="flex items-center gap-2 text-[10.5px] text-foreground/35">
-        {/* Agent identity — a selector when the parent allows switching. */}
+        {/* Agent identity — a selector when the parent allows switching. Shown
+            even for a plain terminal: it doubles as the "turn this shell into a
+            real agent" control (the dropdown re-spawns the tab for the picked
+            agent). Only the checkpoints chip is dropped in `plain` mode — a
+            shell isn't snapshotted. */}
         <AgentSelector agent={agent} onSelect={onSelectAgent} />
 
-        {/* Hairline divider */}
-        <span aria-hidden className="h-3 w-px shrink-0 bg-white/[0.1]" />
+        {!plain && (
+          <>
+            {/* Hairline divider */}
+            <span aria-hidden className="h-3 w-px shrink-0 bg-white/[0.1]" />
 
-        {/* Checkpoints chip — opens RewindPopover. Shows the most
-            recent checkpoint's relative time so the user has ambient
-            awareness of "yes this is being snapshotted, here's when
-            the last one was." */}
-        <div className="relative shrink-0">
+            {/* Checkpoints chip — opens RewindPopover. Shows the most
+                recent checkpoint's relative time so the user has ambient
+                awareness of "yes this is being snapshotted, here's when
+                the last one was." */}
+            <div className="relative shrink-0">
           <button
             ref={rewindAnchorRef}
             type="button"
@@ -605,7 +630,9 @@ export function Composer({
             terminalId={sessionIdRef.current}
             projectPath={projectPathRef.current}
           />
-        </div>
+            </div>
+          </>
+        )}
 
         <span className="ml-auto flex shrink-0 items-center gap-2">
           {/* Hidden picker backing the paperclip. Value reset on click so
@@ -642,18 +669,18 @@ export function Composer({
             onClick={() => sendNow()}
             disabled={!canSend}
             className="
-              flex size-7 items-center justify-center rounded-full
-              border border-white/[0.08] bg-[color:var(--agent)]/15 text-foreground/85
-              transition-[background-color,transform,box-shadow,border-color] duration-150
-              hover:bg-[color:var(--agent)]/35 hover:text-foreground
-              hover:shadow-[0_0_12px_-2px_var(--agent)]
+              flex size-7 shrink-0 items-center justify-center rounded-lg
+              border border-white/[0.1] bg-white/[0.05] text-foreground/60
+              transition-colors
+              hover:border-white/[0.2] hover:text-foreground
+              focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30
               active:scale-95
-              disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[color:var(--agent)]/15
-              disabled:hover:shadow-none
+              disabled:cursor-not-allowed disabled:opacity-40
+              disabled:hover:border-white/[0.1] disabled:hover:text-foreground/60
             "
           >
-            <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 19V5M5 12l7-7 7 7" />
+            <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 10l-4 4 4 4M5 14h11a4 4 0 004-4V6" />
             </svg>
           </button>
         </span>

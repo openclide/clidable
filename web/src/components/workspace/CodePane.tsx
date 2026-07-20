@@ -21,7 +21,7 @@
  * subtrees get `opacity-0 pointer-events-none` and an `aria-hidden`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MockProject } from "../welcome/data";
+import type { Project } from "../welcome/data";
 import { subscribeToFileChanges } from "../../lib/file-watch-client";
 import { invalidateRoot } from "../../lib/code-mirror/diff-cache";
 import { ChangesList, type GitStatusEntry } from "./ChangesList";
@@ -63,7 +63,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 interface Props {
-  project: MockProject;
+  project: Project;
   /** Desktop: whether the file explorer column is shown (toggled from the
    *  SidePane toolbar). Ignored on mobile, where it's a slide-over drawer. */
   explorerOpen?: boolean;

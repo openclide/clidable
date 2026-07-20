@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import type { MockProject } from "../welcome/data";
+import type { Project } from "../welcome/data";
 import { WorkspaceTools, type WorkspaceTool } from "./WorkspaceTools";
 import { ProjectTabs } from "./ProjectTabs";
 import { AddProjectMenu } from "./AddProjectMenu";
@@ -10,7 +10,7 @@ import { isTauri, hasMacTrafficLights } from "../../lib/shell";
 type PreviewMode = "preview" | "code";
 
 interface Props {
-  openProjects: MockProject[];
+  openProjects: Project[];
   activeProjectId: string;
   /** Preview width as a % of the workspace row (0 = hidden, 100 = full). */
   previewPct: number;
@@ -18,7 +18,7 @@ interface Props {
   previewMode: PreviewMode;
   onSelectProject: (id: string) => void;
   onCloseProject: (id: string) => void;
-  onAddProject: (project: MockProject) => void;
+  onAddProject: (project: Project) => void;
   /** Show the side pane in this view (re-selecting the active view hides it). */
   onSelectView: (mode: PreviewMode) => void;
   /** Toggle the terminal/agents pane. */

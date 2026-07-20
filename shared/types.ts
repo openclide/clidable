@@ -38,7 +38,10 @@ export type TerminalAgentId =
   | "qwen"
   | "kimi"
   | "opencode"
-  | "copilot";
+  | "copilot"
+  // Not an AI agent — a plain login shell. Always "installed", no hooks / resume
+  // / status; the tile hides its composer since you type in the terminal.
+  | "terminal";
 
 /** Agent ids that were RENAMED over the product's life → their current id.
  *  Persisted values (a project's last-used agent in localStorage, ai-team.json
@@ -367,6 +370,65 @@ export interface TouchProjectRequest {
 }
 
 export interface RemoveProjectRequest {
+  id: string;
+}
+
+/* ---------------------------------------------------------------------------
+ * /api/workspaces — the persisted unit of work.
+ *
+ * A workspace is the whole multi-project session snapshot: its ordered open
+ * projects, the pane tree, the minimized-terminals dock, and the active
+ * project. `tree` and `minimized` are opaque client-owned JSON (Pane /
+ * MinimizedTerminal[]) the server round-trips. Projects are referenced by their
+ * stable UUID and resolved to Project records on read (in tab order, dropping
+ * any since removed).
+ * ------------------------------------------------------------------------- */
+
+export interface WorkspaceSummary {
+  id: string;
+  /** User override, or null → the client derives the label from `projects`. */
+  name: string | null;
+  /** Open projects in tab order (removed projects dropped). Never empty — a
+   *  workspace with no surviving projects is omitted from listings. */
+  projects: Project[];
+  createdAt: number;
+  lastOpened: number;
+}
+
+export interface WorkspaceFull extends WorkspaceSummary {
+  /** Stored open-project id order, verbatim (may include ids that resolved out
+   *  of `projects`, so the client can preserve the exact tab order). */
+  openProjects: string[];
+  activeProjectId: string | null;
+  /** JSON pane tree (Pane) | null for a fresh workspace the client seeds. */
+  tree: unknown | null;
+  /** JSON MinimizedTerminal[] | null. */
+  minimized: unknown | null;
+}
+
+export interface ListWorkspacesResponse {
+  workspaces: WorkspaceSummary[];
+}
+
+export interface CreateWorkspaceRequest {
+  projectIds: string[];
+  name?: string;
+}
+
+export interface SaveWorkspaceRequest {
+  id: string;
+  name?: string | null;
+  tree: unknown;
+  openProjects: string[];
+  activeProjectId: string | null;
+  minimized: unknown;
+}
+
+export interface TouchWorkspaceRequest {
+  id: string;
+}
+
+export interface RemoveWorkspaceRequest {
   id: string;
 }
 

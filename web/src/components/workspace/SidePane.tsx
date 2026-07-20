@@ -5,7 +5,7 @@ import { PreviewAddressBar } from "./PreviewAddressBar";
 import { DevTerminalPanel } from "./DevTerminalPanel";
 import { CodePane } from "./CodePane";
 import { TerminalGlyph } from "./TerminalGlyph";
-import type { MockProject } from "../welcome/data";
+import type { Project } from "../welcome/data";
 import { setActiveWatchedProject } from "../../lib/file-watch-client";
 import {
   getStoredPreviewUrl,
@@ -29,7 +29,7 @@ const MODES: Array<{ id: Mode; label: string }> = [
 ];
 
 interface SidePaneProps {
-  openProjects: MockProject[];
+  openProjects: Project[];
   previewProjectId: string;
   onPreviewProjectChange: (id: string) => void;
   /** Preview vs Code — lifted to WorkspaceScreen so the top-bar layout menu

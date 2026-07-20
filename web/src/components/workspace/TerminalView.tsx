@@ -258,5 +258,8 @@ function installHintFor(id: TerminalAgentId): string {
       return "npm i -g opencode";
     case "copilot":
       return "npm i -g @github/copilot";
+    case "terminal":
+      // Always installed (your login shell) — this hint is never shown.
+      return "Uses your login shell ($SHELL).";
   }
 }
