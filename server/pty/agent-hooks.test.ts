@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HOOK_ADAPTERS, MANAGED_MARKER } from "./agent-hooks";
+import { HOOK_ADAPTERS, MANAGED_MARKER, SCRIPT_NAME, hookCommand } from "./agent-hooks";
+
+const IS_WINDOWS = process.platform === "win32";
 
 const claude = HOOK_ADAPTERS.claude!;
 const codex = HOOK_ADAPTERS.codex!;
@@ -45,34 +47,159 @@ afterEach(() => {
 
 // --- Claude (settings.json, script under hooks/) ---------------------------
 
-const claudeScript = () => join(dir, "hooks", "clidable-agent-state.sh");
+const claudeScript = () => join(dir, "hooks", SCRIPT_NAME);
 const claudeSettings = () => join(dir, "settings.json");
 const readClaude = () => JSON.parse(readFileSync(claudeSettings(), "utf8"));
-/** [event, state] for every one of our entries in claude settings. */
+/** [event, state] for every one of our entries in claude settings. The state is
+ *  recovered by matching the whole command against `hookCommand` rather than by
+ *  splitting on spaces — the command's shape is the contract under test, and a
+ *  quoted path can itself contain spaces. */
+const STATES = ["idle", "working", "blocked"] as const;
 const claudeOurEvents = () => {
   const hooks = readClaude().hooks as Record<string, any[]>;
   const out: Array<[string, string]> = [];
   for (const [event, entries] of Object.entries(hooks)) {
     for (const e of entries) {
       for (const h of e.hooks) {
-        if (typeof h.command === "string" && h.command.startsWith(claudeScript())) {
-          out.push([event, h.command.slice(claudeScript().length + 1)]); // trailing " <state>"
-        }
+        if (typeof h.command !== "string") continue;
+        const state = STATES.find((st) => h.command === hookCommand(claudeScript(), st));
+        if (state) out.push([event, state]);
       }
     }
   }
   return out;
 };
 
+// --- the command shape (the cross-platform contract) -----------------------
+
+describe("hookCommand", () => {
+  it("names an interpreter rather than relying on the shebang + exec bit", () => {
+    const cmd = hookCommand("/tmp/h.sh", "idle");
+    if (IS_WINDOWS) {
+      // Without -ExecutionPolicy Bypass, Windows' default policy refuses an
+      // unsigned local .ps1 and the hook silently never fires.
+      expect(cmd).toContain("powershell -NoProfile -ExecutionPolicy Bypass -File");
+    } else {
+      expect(cmd.startsWith("sh ")).toBe(true);
+    }
+    expect(cmd.endsWith(" idle")).toBe(true);
+  });
+
+  it("quotes a path containing a space so it stays one argument", () => {
+    const cmd = hookCommand(join("/tmp", "First Last", "h.sh"), "working");
+    // The path must not appear bare — that's the bug: an unquoted space splits
+    // the command into two arguments and the hook never runs.
+    const quote = IS_WINDOWS ? '"' : "'";
+    expect(cmd).toContain(`${quote}${join("/tmp", "First Last", "h.sh")}${quote}`);
+  });
+});
+
+describe("upgrading an install written by an older Clidable", () => {
+  it("reports not-installed for a legacy bare-path entry, then replaces it", () => {
+    claude.install(); // lays down the script file, so isInstalled reaches the entry check
+    // Rewrite our entry to the pre-fix shape: bare, unquoted, no interpreter.
+    const settings = readClaude();
+    settings.hooks.SessionStart = [
+      { matcher: "*", hooks: [{ type: "command", command: `${claudeScript()} idle` }] },
+    ];
+    writeFileSync(claudeSettings(), JSON.stringify(settings));
+
+    // This is what makes the fix reach existing users: ensureHookInstalled skips
+    // when installed, so a legacy entry MUST report false or it never upgrades.
+    expect(claude.isInstalled()).toBe(false);
+
+    claude.install();
+    expect(claude.isInstalled()).toBe(true);
+    // Upgraded in place — the legacy entry is replaced, not duplicated.
+    const ours = readClaude()
+      .hooks.SessionStart.flatMap((e: any) => e.hooks.map((h: any) => h.command))
+      .filter((c: string) => c.includes(claudeScript()));
+    expect(ours).toEqual([hookCommand(claudeScript(), "idle")]);
+  });
+
+  it("recognises (and replaces) an entry written on the OTHER platform", () => {
+    claude.install();
+    // What a Windows install leaves behind, seen from a POSIX host: different
+    // extension, different path separators, different interpreter. A settings
+    // file shared across machines (dotfiles sync, shared CLAUDE_CONFIG_DIR)
+    // hits this — and a foreign entry left in place fails to exec on EVERY
+    // event, so it has to be recognised as ours and swapped, not accumulated.
+    const foreign =
+      'powershell -NoProfile -ExecutionPolicy Bypass -File "C:\\Users\\a\\.claude\\hooks\\clidable-agent-state.ps1" idle';
+    const settings = readClaude();
+    settings.hooks.SessionStart = [
+      { matcher: "*", hooks: [{ type: "command", command: foreign }] },
+    ];
+    writeFileSync(claudeSettings(), JSON.stringify(settings));
+
+    expect(claude.isInstalled()).toBe(false);
+    claude.install();
+
+    const cmds = readClaude().hooks.SessionStart.flatMap((e: any) =>
+      e.hooks.map((h: any) => h.command),
+    );
+    expect(cmds).toEqual([hookCommand(claudeScript(), "idle")]); // swapped, not appended
+  });
+
+  it("reports not-installed when a NON-first event was dropped", () => {
+    claude.install();
+    // Only SessionStart used to be checked, so losing Stop went unnoticed
+    // forever and the agent silently never reported going idle again.
+    const settings = readClaude();
+    delete settings.hooks.Stop;
+    writeFileSync(claudeSettings(), JSON.stringify(settings));
+
+    expect(claude.isInstalled()).toBe(false);
+    claude.install();
+    expect(claude.isInstalled()).toBe(true);
+    expect(Object.fromEntries(claudeOurEvents()).Stop).toBe("idle");
+  });
+
+  it("reports not-installed when our matcher was stripped", () => {
+    claude.install();
+    const settings = readClaude();
+    settings.hooks.SessionStart[0].matcher = undefined;
+    writeFileSync(claudeSettings(), JSON.stringify(settings));
+
+    expect(claude.isInstalled()).toBe(false);
+  });
+
+  it("codex: reports not-installed when the hooks feature flag is reverted", () => {
+    codex.install();
+    expect(codex.isInstalled()).toBe(true);
+    // hooks.json is untouched and current — but codex ignores it entirely
+    // without the feature flag, so entries alone must not count as installed.
+    writeFileSync(join(dir, "config.toml"), "[features]\nhooks = false\n");
+    expect(codex.isInstalled()).toBe(false);
+
+    codex.install();
+    expect(codex.isInstalled()).toBe(true);
+    const toml = readFileSync(join(dir, "config.toml"), "utf8");
+    expect(toml).toMatch(/hooks\s*=\s*true/);
+    // Flipped in place, not shadowed — TOML forbids duplicate keys, so leaving
+    // the old `hooks = false` behind would make codex fail to parse the file
+    // at all: a worse outcome than the disabled flag we came to repair.
+    expect(toml).not.toMatch(/hooks\s*=\s*false/);
+    expect(toml.match(/^\s*hooks\s*=/gm) ?? []).toHaveLength(1);
+  });
+});
+
 describe("claude hook install (multi-event: capture + status)", () => {
   it("writes an executable env-gated script and registers status events", () => {
     claude.install();
     const script = readFileSync(claudeScript(), "utf8");
     expect(script).toContain(MANAGED_MARKER);
-    expect(script).toContain('[ "${CLIDABLE:-}" != "1" ]'); // inert without CLIDABLE
-    expect(script).toContain('state="${1:-}"'); // takes a state arg
-    expect(script).toContain("curl");
-    expect(statSync(claudeScript()).mode & 0o111).toBeGreaterThan(0);
+    if (IS_WINDOWS) {
+      expect(script).toContain('$env:CLIDABLE -ne "1"'); // inert without CLIDABLE
+      expect(script).toContain('param([string]$State = "")'); // takes a state arg
+      expect(script).toContain("Invoke-RestMethod");
+    } else {
+      expect(script).toContain('[ "${CLIDABLE:-}" != "1" ]'); // inert without CLIDABLE
+      expect(script).toContain('state="${1:-}"'); // takes a state arg
+      expect(script).toContain("curl");
+      // No exec bit on Windows — the command names the interpreter instead.
+      expect(statSync(claudeScript()).mode & 0o111).toBeGreaterThan(0);
+    }
 
     const events = Object.fromEntries(claudeOurEvents());
     expect(events.SessionStart).toBe("idle");
@@ -95,7 +222,7 @@ describe("claude hook install (multi-event: capture + status)", () => {
     expect(s.model).toBe("opus"); // untouched
     const preCmds = s.hooks.PreToolUse.flatMap((e: any) => e.hooks.map((h: any) => h.command));
     expect(preCmds).toContain("mine.sh"); // user's PreToolUse hook survives ours
-    expect(preCmds.some((c: string) => c.startsWith(claudeScript()))).toBe(true); // ours added
+    expect(preCmds.some((c: string) => c.includes(claudeScript()))).toBe(true); // ours added
   });
 
   it("is idempotent — installing twice leaves one of our entries per event", () => {
@@ -129,7 +256,7 @@ describe("claude hook install (multi-event: capture + status)", () => {
 describe("codex hook install (hooks.json + config.toml enable)", () => {
   it("writes hooks.json entries and flips [features] hooks = true", () => {
     codex.install();
-    expect(existsSync(join(dir, "clidable-agent-state.sh"))).toBe(true); // script at root
+    expect(existsSync(join(dir, SCRIPT_NAME))).toBe(true); // script at root
     const hooks = JSON.parse(readFileSync(join(dir, "hooks.json"), "utf8")).hooks;
     expect(Array.isArray(hooks.SessionStart)).toBe(true);
     expect(Array.isArray(hooks.PermissionRequest)).toBe(true); // blocked signal
@@ -155,7 +282,7 @@ describe("codex hook install (hooks.json + config.toml enable)", () => {
 describe("copilot hook install", () => {
   it("registers status events in settings.json and installs/uninstalls cleanly", () => {
     copilot.install();
-    expect(existsSync(join(dir, "hooks", "clidable-agent-state.sh"))).toBe(true);
+    expect(existsSync(join(dir, "hooks", SCRIPT_NAME))).toBe(true);
     const hooks = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")).hooks;
     expect(Array.isArray(hooks.SessionStart)).toBe(true);
     expect(Array.isArray(hooks.UserPromptSubmit)).toBe(true);
@@ -168,17 +295,17 @@ describe("copilot hook install", () => {
 // --- Cursor (hooks.json, simple {command} schema + version) ----------------
 
 describe("cursor hook install (simple schema + version)", () => {
-  it("adds version:1, lowercase events, and bash-prefixed simple commands", () => {
+  it("adds version:1, lowercase events, and interpreter-prefixed simple commands", () => {
     cursor.install();
-    const script = join(dir, "clidable-agent-state.sh"); // at dir root
+    const script = join(dir, SCRIPT_NAME); // at dir root
     expect(existsSync(script)).toBe(true);
     const cfg = JSON.parse(readFileSync(join(dir, "hooks.json"), "utf8"));
     expect(cfg.version).toBe(1);
     // simple schema: entries are { command }, not { hooks: [...] }
     const entry = cfg.hooks.sessionStart[0];
     expect(entry.hooks).toBeUndefined();
-    expect(entry.command).toBe(`bash ${script} idle`);
-    expect(cfg.hooks.beforeSubmitPrompt[0].command).toBe(`bash ${script} working`);
+    expect(entry.command).toBe(hookCommand(script, "idle"));
+    expect(cfg.hooks.beforeSubmitPrompt[0].command).toBe(hookCommand(script, "working"));
     expect(cursor.isInstalled()).toBe(true);
   });
 
@@ -192,7 +319,7 @@ describe("cursor hook install (simple schema + version)", () => {
     expect(cfg.version).toBe(2); // not overwritten
     const cmds = cfg.hooks.sessionStart.map((e: any) => e.command);
     expect(cmds).toContain("theirs.sh"); // their hook survives
-    expect(cmds.some((c: string) => c.includes("clidable-agent-state.sh"))).toBe(true);
+    expect(cmds.some((c: string) => c.includes(SCRIPT_NAME))).toBe(true);
 
     cursor.uninstall();
     const after = JSON.parse(readFileSync(join(dir, "hooks.json"), "utf8"));
@@ -205,13 +332,15 @@ describe("cursor hook install (simple schema + version)", () => {
 describe("kimi hook install (config.toml block)", () => {
   it("adds a managed [[hooks]] block and installs the shell hook", () => {
     kimi.install();
-    const script = join(dir, "hooks", "clidable-agent-state.sh");
+    const script = join(dir, "hooks", SCRIPT_NAME);
     expect(existsSync(script)).toBe(true);
     const toml = readFileSync(join(dir, "config.toml"), "utf8");
     expect(toml).toContain("[[hooks]]");
     expect(toml).toContain('event = "SessionStart"');
     expect(toml).toContain('event = "Notification"'); // blocked signal (valid kimi event)
-    expect(toml).toContain(`command = "${script} idle"`);
+    // TOML basic strings escape \ and " exactly as JSON does, so this is the
+    // same serialisation the installer writes (backslashes matter on Windows).
+    expect(toml).toContain(`command = ${JSON.stringify(hookCommand(script, "idle"))}`);
     expect(kimi.isInstalled()).toBe(true);
   });
 
@@ -226,7 +355,7 @@ describe("kimi hook install (config.toml block)", () => {
     toml = readFileSync(join(dir, "config.toml"), "utf8");
     expect(toml).toContain('model = "kimi-k2"'); // still there
     expect(toml).toContain('event = "mine"'); // still there
-    expect(toml).not.toContain("clidable-agent-state.sh"); // ours removed
+    expect(toml).not.toContain(SCRIPT_NAME); // ours removed
     expect(kimi.isInstalled()).toBe(false);
   });
 });
@@ -255,7 +384,7 @@ describe("opencode plugin install", () => {
 
 describe("antigravity hook install (named-hook map)", () => {
   const hooksPath = () => join(dir, "hooks.json");
-  const script = () => join(dir, "clidable-agent-state.sh");
+  const script = () => join(dir, SCRIPT_NAME);
 
   it("adds a 'clidable' named hook with PreInvocation + Stop and an event-aware script", () => {
     antigravity.install();
@@ -265,8 +394,8 @@ describe("antigravity hook install (named-hook map)", () => {
     expect(src).toContain("conversationId");
 
     const root = JSON.parse(readFileSync(hooksPath(), "utf8"));
-    expect(root.clidable.PreInvocation[0].command).toBe(`${script()} working`);
-    expect(root.clidable.Stop[0].command).toBe(`${script()} idle`);
+    expect(root.clidable.PreInvocation[0].command).toBe(hookCommand(script(), "working"));
+    expect(root.clidable.Stop[0].command).toBe(hookCommand(script(), "idle"));
     expect(antigravity.isInstalled()).toBe(true);
   });
 

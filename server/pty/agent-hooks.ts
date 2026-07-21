@@ -15,7 +15,8 @@
  *   • Non-destructive — if an existing config won't parse, we ABORT.
  *   • Env-gated inert — the script early-exits unless CLIDABLE=1, so it does
  *     nothing during the user's normal (non-Clidable) agent use.
- *   • Dependency-light — pure sh + curl; no jq/python.
+ *   • Dependency-light — POSIX sh + curl, or Windows PowerShell; no jq/python.
+ *   • Interpreter named explicitly — see `hookCommand`.
  *
  * Note: herdr's *current* hooks are capture-only (it derives status from
  * screen-scraping). Hook-based status is coarser but avoids that machinery.
@@ -26,7 +27,17 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAgentId, TerminalAgentState } from "../../shared/types";
 
-const SCRIPT_NAME = "clidable-agent-state.sh";
+const IS_WINDOWS = process.platform === "win32";
+
+/** The part of our script's filename that is the same on every platform. It is
+ *  how we recognise OUR hook entries (see `isOursEntry`) — matching the full
+ *  path instead would make each platform blind to the other's entries. */
+const SCRIPT_STEM = "clidable-agent-state";
+
+/** Our hook script's filename. Windows can't run a `#!/bin/sh` file — there is
+ *  no shebang and no exec bit — so it gets a PowerShell twin instead. Exported
+ *  so tests name the file the same way the installer does. */
+export const SCRIPT_NAME = IS_WINDOWS ? `${SCRIPT_STEM}.ps1` : `${SCRIPT_STEM}.sh`;
 export const MANAGED_MARKER = "managed by Clidable";
 
 export type AgentState = TerminalAgentState;
@@ -38,11 +49,90 @@ interface HookEvent {
   state: AgentState;
 }
 
-// --- the hook script (our code; sh + curl) ---------------------------------
+// --- the command an agent runs ---------------------------------------------
+
+/** Quote a script path for the shell the agent hands the command to. A hook
+ *  config stores ONE command string, so an unquoted path containing a space
+ *  splits into two arguments and the hook silently never runs. That's routine
+ *  on Windows (`C:\Users\First Last\…`) and reachable on POSIX through the
+ *  config-dir env overrides (CLAUDE_CONFIG_DIR, COPILOT_HOME, …).
+ *
+ *  Only the POSIX branch escapes: a Windows filename cannot contain `"` at all,
+ *  so there is nothing to escape there — and cmd.exe wouldn't honour backslash
+ *  escaping if there were. Don't reuse this for arbitrary arguments. */
+function quoteForShell(path: string): string {
+  return IS_WINDOWS ? `"${path}"` : `'${path.replace(/'/g, `'"'"'`)}'`;
+}
+
+/**
+ * The command string registered for one event. The interpreter is ALWAYS named
+ * explicitly rather than relying on the shebang + exec bit, on both platforms —
+ * that's the only form that works on Windows, and it costs POSIX nothing.
+ *
+ * `-ExecutionPolicy Bypass` is load-bearing: Windows' default policy refuses to
+ * run an unsigned local .ps1, so without it the hook installs cleanly and then
+ * silently never fires. `-NoProfile` skips the user's profile (faster, and no
+ * inherited state). `powershell` (5.1) rather than `pwsh` (7) because only the
+ * former is guaranteed present.
+ *
+ * Known cost, accepted: Windows pays a whole powershell.exe start (~200-400ms
+ * even with -NoProfile) per event, and PreToolUse fires on every tool call —
+ * versus ~5ms for `sh`. Trimming the Windows event set would cut it, at the
+ * price of coarser status; a compiled reporter would fix it properly. Revisit
+ * once there's a Windows build to measure on rather than guess at.
+ */
+export function hookCommand(scriptPath: string, state: string): string {
+  const interpreter = IS_WINDOWS
+    ? "powershell -NoProfile -ExecutionPolicy Bypass -File"
+    : "sh";
+  return `${interpreter} ${quoteForShell(scriptPath)} ${state}`;
+}
+
+const BOM = "\uFEFF";
+
+/**
+ * Write a hook script and make it runnable.
+ *
+ * chmod is POSIX-only: Windows has no exec bit (Node's chmod there only toggles
+ * read-only) and `hookCommand` names the interpreter anyway.
+ *
+ * The BOM is not decoration. Windows PowerShell 5.1 — the one guaranteed to be
+ * present, and the one `hookCommand` invokes — decodes a BOM-less .ps1 as the
+ * system ANSI codepage, not UTF-8. Our managed header carries an em dash, so
+ * without this the script is mis-decoded on any non-UTF-8 codepage.
+ */
+function writeScript(path: string, contents: string): void {
+  writeFileSync(path, IS_WINDOWS ? BOM + contents : contents);
+  if (!IS_WINDOWS) chmodSync(path, 0o755);
+}
+
+// --- the hook script (our code; sh + curl, or PowerShell) -------------------
+
+/**
+ * Read stdin into `$stdin`, capped at 3s. The POSIX scripts get this from
+ * `timeout 3 cat`; PowerShell has no such wrapper, so we await the async read
+ * with a budget and fall through to an empty payload.
+ *
+ * The cap is the point: `[Console]::In.ReadToEnd()` on a stdin nobody redirected
+ * blocks until EOF that never comes, which hangs whichever agent invoked the
+ * hook — for agents that run hooks synchronously in their loop, on every event.
+ */
+const PS_READ_STDIN = [
+  '$stdin = ""',
+  "try {",
+  "  $read = [Console]::In.ReadToEndAsync()",
+  "  if ($read.Wait(3000)) { $stdin = $read.Result }",
+  "} catch { }",
+];
+
+/** The lifecycle-reporting hook, in whichever language this platform can run. */
+function hookScript(agent: string): string {
+  return IS_WINDOWS ? hookScriptPs1(agent) : hookScriptSh(agent);
+}
 
 /** State is passed as $1; the raw event payload arrives on stdin (SessionStart
  *  carries session_id, which the server extracts). Inert unless CLIDABLE=1. */
-function hookScript(agent: string): string {
+function hookScriptSh(agent: string): string {
   return [
     "#!/bin/sh",
     `# ${MANAGED_MARKER} — do not edit; reinstalling overwrites this file.`,
@@ -66,6 +156,59 @@ function hookScript(agent: string): string {
   ].join("\n");
 }
 
+/**
+ * The Windows twin of `hookScriptSh` — same contract (state as the first
+ * argument, raw payload on stdin, inert unless CLIDABLE=1), expressed in
+ * PowerShell.
+ *
+ * It parses and re-serialises the payload rather than splicing text like the sh
+ * version, so a malformed payload degrades to `{}` instead of producing an
+ * invalid body. Three PowerShell details are load-bearing:
+ *
+ *   • `-ErrorAction Stop` on ConvertFrom-Json. try/catch only handles
+ *     TERMINATING errors, and `$ErrorActionPreference = "SilentlyContinue"`
+ *     stops a parse failure from ever becoming one — so without this the catch
+ *     never runs, the pipeline yields nothing, and `$raw` is overwritten with
+ *     $null. The null re-check below is the belt to that braces.
+ *   • `-Depth 12`. ConvertTo-Json defaults to 2 and would flatten anything
+ *     deeper into "System.Object[]" strings, losing the very session_id we're
+ *     here for.
+ *   • The stdin read is time-capped (see `PS_READ_STDIN`) so a hook invoked
+ *     without a redirected stdin can't hang the agent that called it.
+ */
+function hookScriptPs1(agent: string): string {
+  return [
+    `# ${MANAGED_MARKER} — do not edit; reinstalling overwrites this file.`,
+    "# Reports agent lifecycle (state + SessionStart session id) to Clidable for",
+    "# durable-session resume and the live status indicator. Inert unless the",
+    "# session was launched by Clidable (CLIDABLE=1).",
+    'param([string]$State = "")',
+    '$ErrorActionPreference = "SilentlyContinue"',
+    'if ($env:CLIDABLE -ne "1") { exit 0 }',
+    "if ([string]::IsNullOrWhiteSpace($env:CLIDABLE_TERMINAL_ID)) { exit 0 }",
+    "if ([string]::IsNullOrWhiteSpace($env:CLIDABLE_REPORT_URL)) { exit 0 }",
+    ...PS_READ_STDIN,
+    "$raw = @{}",
+    "if (-not [string]::IsNullOrWhiteSpace($stdin)) {",
+    "  $parsed = $null",
+    "  try { $parsed = $stdin | ConvertFrom-Json -ErrorAction Stop } catch { $parsed = $null }",
+    "  if ($null -ne $parsed) { $raw = $parsed }",
+    "}",
+    "try {",
+    "  $body = @{",
+    "    terminalId = $env:CLIDABLE_TERMINAL_ID",
+    `    agent = ${JSON.stringify(agent)}`,
+    "    state = $State",
+    "    raw = $raw",
+    "  } | ConvertTo-Json -Depth 12 -Compress",
+    "  Invoke-RestMethod -Uri $env:CLIDABLE_REPORT_URL -Method Post `",
+    '    -ContentType "application/json" -Body $body -TimeoutSec 2 | Out-Null',
+    "} catch { }",
+    "exit 0",
+    "",
+  ].join("\n");
+}
+
 // --- shared JSON "hooks object" manipulation (claude & codex both use it) ---
 
 type Json = Record<string, any>;
@@ -74,10 +217,6 @@ type Json = Record<string, any>;
  *   • nested  — {matcher?, hooks:[{type:"command", command}]}  (claude/codex/copilot)
  *   • simple  — {command}                                       (cursor)  */
 type HookSchema = "nested" | "simple";
-
-function commandFor(spec: AgentHookSpec, scriptPath: string, state: string): string {
-  return `${spec.commandPrefix ?? ""}${scriptPath} ${state}`;
-}
 
 /** Every command string referenced by a hook entry (either shape). */
 function entryCommands(entry: unknown): string[] {
@@ -89,10 +228,39 @@ function entryCommands(entry: unknown): string[] {
   return typeof e.command === "string" ? [e.command] : [];
 }
 
-/** An entry is ours if any of its commands references our script path (matches
- *  both the bare and the `bash <path>`-prefixed forms). */
-function isOursEntry(entry: unknown, scriptPath: string): boolean {
-  return entryCommands(entry).some((c) => c.includes(scriptPath));
+/**
+ * An entry is ours if any of its commands references our script by NAME — in
+ * any form we have ever written (bare, `bash `-prefixed, quoted) and from any
+ * platform or path.
+ *
+ * Deliberately loose, because it drives removal. Matching the full script path
+ * would make each platform blind to the other's entries, and a settings file
+ * shared between machines (dotfiles sync, or CLAUDE_CONFIG_DIR pointed at a
+ * shared location) would then accumulate one entry per platform — with the
+ * foreign one failing to exec on every single event. `isCurrentEntry` is the
+ * strict counterpart that decides whether to rewrite.
+ */
+function isOursEntry(entry: unknown): boolean {
+  return entryCommands(entry).some((c) => c.includes(SCRIPT_STEM));
+}
+
+/** An entry is current if it carries exactly the command — and matcher — we'd
+ *  write today. Strict on purpose: this is what `isInstalled` asks, so an entry
+ *  written in an older format reports "not installed" and gets rewritten on the
+ *  next spawn. Without it, everyone who installed before the quoting fix would
+ *  keep the broken command forever, since `ensureHookInstalled` skips when
+ *  installed. */
+function isCurrentEntry(
+  entry: unknown,
+  scriptPath: string,
+  state: string,
+  matcher?: string,
+): boolean {
+  const expected = hookCommand(scriptPath, state);
+  if (!entryCommands(entry).some((c) => c === expected)) return false;
+  // A stripped matcher changes which events the agent actually routes to us,
+  // so it has to count as "not current" and trigger a rewrite.
+  return matcher === undefined || (entry as Json)?.matcher === matcher;
 }
 
 function buildEntry(spec: AgentHookSpec, command: string): Json {
@@ -107,8 +275,8 @@ function mergeEvents(root: Json, spec: AgentHookSpec, scriptPath: string): void 
   const hooks = root.hooks as Json;
   for (const { event, state } of spec.events) {
     const arr: Json[] = Array.isArray(hooks[event]) ? hooks[event] : [];
-    const entry = buildEntry(spec, commandFor(spec, scriptPath, state));
-    hooks[event] = [...arr.filter((e) => !isOursEntry(e, scriptPath)), entry];
+    const entry = buildEntry(spec, hookCommand(scriptPath, state));
+    hooks[event] = [...arr.filter((e) => !isOursEntry(e)), entry];
   }
 }
 
@@ -117,7 +285,7 @@ function removeEvents(root: Json, scriptPath: string): void {
   if (!hooks || typeof hooks !== "object") return;
   for (const event of Object.keys(hooks)) {
     if (!Array.isArray(hooks[event])) continue;
-    const kept = hooks[event].filter((e: Json) => !isOursEntry(e, scriptPath));
+    const kept = hooks[event].filter((e: Json) => !isOursEntry(e));
     if (kept.length > 0) hooks[event] = kept;
     else delete hooks[event];
   }
@@ -138,12 +306,28 @@ function readConfigOrThrow(path: string): Json {
   }
 }
 
+/** Is codex's hooks feature switched on? Without it codex ignores hooks.json
+ *  entirely, so this is half of "is the codex hook installed". */
+function codexHooksEnabled(path: string): boolean {
+  if (!existsSync(path)) return false;
+  return /^\s*hooks\s*=\s*true/m.test(readFileSync(path, "utf8"));
+}
+
 /** Ensure `[features] hooks = true` in a codex config.toml (enables its hooks).
- *  Simplified line editor — idempotent, preserves the rest of the file. */
+ *  Simplified line editor — idempotent, preserves the rest of the file.
+ *
+ *  Uses the same loose key match as `codexHooksEnabled` on purpose: if the two
+ *  ever disagree, `isInstalled` stays false after a successful install and every
+ *  spawn rewrites the user's config forever. */
 function enableCodexHooksToml(path: string): void {
+  if (codexHooksEnabled(path)) return; // already enabled
   let content = existsSync(path) ? readFileSync(path, "utf8") : "";
-  if (/^\s*hooks\s*=\s*true/m.test(content)) return; // already enabled
-  if (/^\s*\[features\]/m.test(content)) {
+  if (/^\s*hooks\s*=/m.test(content)) {
+    // An explicit `hooks = false` must be FLIPPED, not shadowed by a second
+    // line: TOML forbids duplicate keys, so appending one makes the whole file
+    // unparseable — strictly worse than the disabled flag we came to fix.
+    content = content.replace(/^(\s*)hooks\s*=.*$/m, "$1hooks = true");
+  } else if (/^\s*\[features\]/m.test(content)) {
     content = content.replace(/^(\s*\[features\][^\n]*)$/m, "$1\nhooks = true");
   } else {
     const base = content.replace(/\n*$/, "");
@@ -166,8 +350,6 @@ interface AgentHookSpec {
   schema: HookSchema;
   /** Some agents (claude) want a matcher on each nested entry; codex omits it. */
   matcher?: string;
-  /** Prefix on the command (cursor needs `bash `; others none). */
-  commandPrefix?: string;
   /** A top-level version the agent's hooks file requires (cursor: 1). */
   version?: number;
   events: HookEvent[];
@@ -226,14 +408,14 @@ const COPILOT_SPEC: AgentHookSpec = {
 };
 
 // Cursor Agent — hooks.json with a `version` field and a SIMPLE `{command}`
-// entry shape; events are lowercase and the command is `bash <script> <state>`.
+// entry shape; events are lowercase. (It used to carry its own `bash ` prefix;
+// `hookCommand` now names the interpreter for every agent, so it doesn't.)
 const CURSOR_SPEC: AgentHookSpec = {
   agent: "cursor",
   dir: () => process.env.CURSOR_CONFIG_DIR || join(homedir(), ".cursor"),
   scriptSubdir: "",
   hooksFile: "hooks.json",
   schema: "simple",
-  commandPrefix: "bash ",
   version: 1,
   events: [
     { event: "sessionStart", state: "idle" },
@@ -270,8 +452,7 @@ function makeAdapter(spec: AgentHookSpec): HookAdapter {
       const root = readConfigOrThrow(hooksPath);
 
       mkdirSync(join(spec.dir(), spec.scriptSubdir), { recursive: true });
-      writeFileSync(scriptPath, hookScript(spec.agent));
-      chmodSync(scriptPath, 0o755);
+      writeScript(scriptPath, hookScript(spec.agent));
 
       // Some hooks files carry a required top-level version (cursor).
       if (spec.version !== undefined && root.version === undefined) {
@@ -311,9 +492,22 @@ function makeAdapter(spec: AgentHookSpec): HookAdapter {
       } catch {
         return false;
       }
-      const first = spec.events[0]?.event;
-      const arr = first ? root.hooks?.[first] : undefined;
-      return Array.isArray(arr) && arr.some((e: Json) => isOursEntry(e, scriptPath));
+      // EVERY event, not just the first: a config where one entry survived but
+      // the others were dropped (hand-edit, bad merge) would otherwise report
+      // installed forever, and `ensureHookInstalled` would never repair it —
+      // leaving the agent with no status transitions and nothing to show why.
+      const current = spec.events.every(({ event, state }) => {
+        const arr = root.hooks?.[event];
+        return (
+          Array.isArray(arr) &&
+          arr.some((e: Json) => isCurrentEntry(e, scriptPath, state, spec.matcher))
+        );
+      });
+      if (!current) return false;
+      // Entries alone aren't enough for codex: install also flips the feature
+      // flag that makes it read them at all, and that can be reverted
+      // independently (config.toml edit, agent upgrade).
+      return !spec.enableCodexToml || codexHooksEnabled(join(spec.dir(), "config.toml"));
     },
   };
 }
@@ -371,7 +565,7 @@ function buildKimiConfig(content: string, scriptPath: string): string {
   for (const { event, state } of KIMI_EVENTS) {
     result +=
       `[[hooks]]\nevent = ${tomlString(event)}\n` +
-      `command = ${tomlString(`${scriptPath} ${state}`)}\ntimeout = 10\n\n`;
+      `command = ${tomlString(hookCommand(scriptPath, state))}\ntimeout = 10\n\n`;
   }
   result += KIMI_BLOCK_END + "\n";
   return result;
@@ -384,8 +578,7 @@ const kimiAdapter: HookAdapter = {
     const dir = kimiConfigDir();
     mkdirSync(join(dir, "hooks"), { recursive: true });
     const scriptPath = join(dir, "hooks", SCRIPT_NAME);
-    writeFileSync(scriptPath, hookScript("kimi"));
-    chmodSync(scriptPath, 0o755);
+    writeScript(scriptPath, hookScript("kimi"));
     const configPath = join(dir, "config.toml");
     const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
     writeFileSync(configPath, buildKimiConfig(existing, scriptPath));
@@ -408,9 +601,17 @@ const kimiAdapter: HookAdapter = {
   },
   isInstalled() {
     const dir = kimiConfigDir();
-    if (!existsSync(join(dir, "hooks", SCRIPT_NAME))) return false;
+    const scriptPath = join(dir, "hooks", SCRIPT_NAME);
+    if (!existsSync(scriptPath)) return false;
     const configPath = join(dir, "config.toml");
-    return existsSync(configPath) && readFileSync(configPath, "utf8").includes(KIMI_BLOCK_BEGIN);
+    if (!existsSync(configPath)) return false;
+    const toml = readFileSync(configPath, "utf8");
+    const first = KIMI_EVENTS[0]!;
+    // Both the marker AND today's command shape — an older block reinstalls.
+    return (
+      toml.includes(KIMI_BLOCK_BEGIN) &&
+      toml.includes(tomlString(hookCommand(scriptPath, first.state)))
+    );
   },
 };
 
@@ -538,10 +739,15 @@ function antigravityConfigDir(): string {
   return process.env.CLIDABLE_AGY_CONFIG_DIR || join(homedir(), ".gemini", "config");
 }
 
+/** Antigravity's hook script, in whichever language this platform can run. */
+function antigravityHookScript(): string {
+  return IS_WINDOWS ? antigravityHookScriptPs1() : antigravityHookScriptSh();
+}
+
 /** Antigravity's hook script: hang-safe (agy blocks on it), reports the
  *  conversationId, and emits the JSON agy requires per event — `{}` for
  *  PreInvocation, and a non-"continue" decision for Stop (so it doesn't loop). */
-function antigravityHookScript(): string {
+function antigravityHookScriptSh(): string {
   return [
     "#!/bin/sh",
     `# ${MANAGED_MARKER} — do not edit; reinstalling overwrites this file.`,
@@ -561,6 +767,50 @@ function antigravityHookScript(): string {
   ].join("\n");
 }
 
+/**
+ * The Windows twin of `antigravityHookScriptSh`. Same three obligations: read
+ * stdin without hanging agy's loop, report the conversationId, and always print
+ * the per-event JSON agy expects.
+ *
+ * The stdin read is time-capped by `PS_READ_STDIN` (the sh version uses
+ * `timeout 3 cat`), which guarantees the decision JSON is always printed even
+ * if agy never closes stdin.
+ */
+function antigravityHookScriptPs1(): string {
+  return [
+    `# ${MANAGED_MARKER} — do not edit; reinstalling overwrites this file.`,
+    "# Reports agy's conversationId to Clidable and emits the per-event JSON agy",
+    "# expects. Runs synchronously in agy's loop, so it returns fast: the stdin",
+    "# read is time-capped and the response is a fixed object.",
+    'param([string]$State = "working")',
+    '$ErrorActionPreference = "SilentlyContinue"',
+    ...PS_READ_STDIN,
+    "$conv = $null",
+    "if (-not [string]::IsNullOrWhiteSpace($stdin)) {",
+    // -ErrorAction Stop: without it a parse failure is non-terminating, the
+    // catch never fires, and $conv silently keeps whatever it had.
+    "  try { $conv = ($stdin | ConvertFrom-Json -ErrorAction Stop).conversationId } catch { $conv = $null }",
+    "}",
+    'if ($env:CLIDABLE -eq "1" -and $conv -and',
+    "    -not [string]::IsNullOrWhiteSpace($env:CLIDABLE_TERMINAL_ID) -and",
+    "    -not [string]::IsNullOrWhiteSpace($env:CLIDABLE_REPORT_URL)) {",
+    "  try {",
+    "    $body = @{",
+    "      terminalId = $env:CLIDABLE_TERMINAL_ID",
+    '      agent = "antigravity"',
+    "      state = $State",
+    "      raw = @{ conversationId = $conv }",
+    "    } | ConvertTo-Json -Depth 12 -Compress",
+    "    Invoke-RestMethod -Uri $env:CLIDABLE_REPORT_URL -Method Post `",
+    '      -ContentType "application/json" -Body $body -TimeoutSec 2 | Out-Null',
+    "  } catch { }",
+    "}",
+    'if ($State -eq "idle") { Write-Output \'{"decision":"stop"}\' } else { Write-Output \'{}\' }',
+    "exit 0",
+    "",
+  ].join("\n");
+}
+
 const antigravityAdapter: HookAdapter = {
   agent: "antigravity",
   configDir: antigravityConfigDir,
@@ -571,12 +821,13 @@ const antigravityAdapter: HookAdapter = {
     const hooksPath = join(dir, "hooks.json");
     // Parse existing named-hook map BEFORE writing (abort on unparseable).
     const root = readConfigOrThrow(hooksPath);
-    writeFileSync(scriptPath, antigravityHookScript());
-    chmodSync(scriptPath, 0o755);
+    writeScript(scriptPath, antigravityHookScript());
     // Our own named hook; preserves the user's other named hooks untouched.
     root.clidable = {
-      PreInvocation: [{ type: "command", command: `${scriptPath} working`, timeout: 10 }],
-      Stop: [{ type: "command", command: `${scriptPath} idle`, timeout: 10 }],
+      PreInvocation: [
+        { type: "command", command: hookCommand(scriptPath, "working"), timeout: 10 },
+      ],
+      Stop: [{ type: "command", command: hookCommand(scriptPath, "idle"), timeout: 10 }],
     };
     writeFileSync(hooksPath, JSON.stringify(root, null, 2) + "\n");
   },
@@ -601,11 +852,17 @@ const antigravityAdapter: HookAdapter = {
   },
   isInstalled() {
     const dir = antigravityConfigDir();
-    if (!existsSync(join(dir, SCRIPT_NAME))) return false;
+    const scriptPath = join(dir, SCRIPT_NAME);
+    if (!existsSync(scriptPath)) return false;
     const hooksPath = join(dir, "hooks.json");
     if (!existsSync(hooksPath)) return false;
     try {
-      return !!readConfigOrThrow(hooksPath).clidable;
+      // Today's command shape, not just presence — an older entry reinstalls.
+      const pre = readConfigOrThrow(hooksPath).clidable?.PreInvocation;
+      return (
+        Array.isArray(pre) &&
+        pre.some((e: Json) => isCurrentEntry(e, scriptPath, "working"))
+      );
     } catch {
       return false;
     }
