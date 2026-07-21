@@ -30,3 +30,42 @@ export function isMacOS(): boolean {
 /** Reserve the top-left strip for the macOS traffic lights — only when the
  *  desktop app is actually running on macOS (overlay titlebar). */
 export const hasMacTrafficLights = (): boolean => isTauri() && isMacOS();
+
+/** True on Linux. Only interesting because it's the one desktop platform with no
+ *  OS backdrop API at all — see `backdropMode`. */
+export function isLinux(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } })
+    .userAgentData;
+  const platform = uaData?.platform ?? navigator.platform ?? "";
+  // "Android" also matches /linux/i in the UA string; exclude it explicitly.
+  if (/android/i.test(navigator.userAgent ?? "")) return false;
+  return /linux|x11/i.test(platform) || /X11|Linux/.test(navigator.userAgent ?? "");
+}
+
+/**
+ * Who draws the window's backdrop.
+ *
+ *   - "vibrancy" — nobody, deliberately. The window is see-through and the OS
+ *     paints behind it, so any background of ours would cover that up. macOS
+ *     (NSVisualEffectView) and Windows (Mica, or Acrylic on Win10) both do this.
+ *   - "painted"  — we do, with the gradient mesh. The browser/PWA has no window
+ *     to see through, and Linux has no blur API at all: `window-vibrancy`
+ *     supports only macOS and Windows, and there is no cross-desktop
+ *     equivalent. A transparent window there shows the raw desktop (with a
+ *     compositor) or renders undefined (without one), so Linux must paint.
+ *
+ * Keyed on the capability rather than the shell, because "is it Tauri" and "is
+ * the window see-through" are NOT the same question — that conflation is why
+ * the Linux build shipped transparent with nothing behind it.
+ *
+ * Note on Windows: Mica samples the desktop WALLPAPER (blurred and tinted), it
+ * does not live-blur the windows behind you. Over a plain or solid wallpaper a
+ * perfectly working Mica looks flat — verified on Windows 11 build 26100, where
+ * the app reported `window backdrop: mica` and still looked like a flat panel.
+ * Flat is not evidence that it failed.
+ */
+export type BackdropMode = "vibrancy" | "painted";
+
+export const backdropMode = (): BackdropMode =>
+  isTauri() && !isLinux() ? "vibrancy" : "painted";

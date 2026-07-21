@@ -1,15 +1,21 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
-import { detectShell } from "./lib/shell";
+import { backdropMode, detectShell } from "./lib/shell";
 
-// Tag both <html> and <body> so CSS can target Tauri vs browser shell.
-// The root-level background lives on <html> (so it always paints the full
-// document — putting it on <body> leaves a "gray strip" wherever body's
-// height-100% is shorter than the actual scrolling document).
+// Tag both <html> and <body> with the shell. No stylesheet reads this any more
+// (the backdrop moved to `data-backdrop` below, which asks a different
+// question) — it stays as a debugging marker, so "which shell is this?" is
+// answerable from a screenshot of the inspector.
 const shell = detectShell();
 document.documentElement.dataset.shell = shell;
 document.body.dataset.shell = shell;
+
+// Whether the window is see-through (the OS paints behind it) or paints its own
+// backdrop. NOT the same question as which shell we're in: the Linux desktop app
+// is Tauri but must still paint, because no Linux blur API exists. See
+// `backdropMode`.
+document.documentElement.dataset.backdrop = backdropMode();
 
 // A file dropped outside a drop target would otherwise NAVIGATE the page to
 // that file, replacing the whole app (in the Tauri shell too — native drop

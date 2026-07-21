@@ -97,6 +97,47 @@ fn ensure_server(app: &AppHandle) {
     let _ = app;
 }
 
+/// Tint painted over the Windows Acrylic blur, as RGBA.
+///
+/// The RGB tracks the app's own `--color-background` (oklch(0.13 0.015 280) =
+/// #06070d), lifted slightly so the blur still reads rather than crushing to
+/// black — a neutral grey here made the window drift cool against the app's
+/// blue-dark palette.
+///
+/// **Alpha is the show-through knob**, and the only value worth tuning: 0 is a
+/// clear window, 255 hides the desktop completely. Tuned by eye against a real
+/// desktop: 125 (~49% through) was unreadable, 200 (~22%) still busy, 215
+/// (~16%) keeps the blur legible as depth without competing with the UI.
+#[cfg(target_os = "windows")]
+const ACRYLIC_TINT: (u8, u8, u8, u8) = (14, 15, 24, 215);
+
+/// Record which backdrop actually applied, somewhere a user can find it.
+///
+/// stderr alone is not enough on Windows: the app is built as a GUI-subsystem
+/// binary, so a double-clicked `clidable.exe` has no console attached and the
+/// line goes nowhere — which is precisely the "window looks flat and nothing
+/// says why" case this reporting exists to end. So it also appends to a log file
+/// in the platform log dir, next to where the Bun server keeps its own.
+#[cfg(target_os = "windows")]
+fn report_backdrop(window: &WebviewWindow, outcome: &str) {
+    let line = format!("[clidable] window backdrop: {outcome}");
+    eprintln!("{line}"); // still useful when launched from a terminal
+    let Ok(dir) = window.app_handle().path().app_log_dir() else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("clidable-shell.log"))
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// Clidable is dark-first + uses OS vibrancy. Force the window dark and apply the
 /// platform blur. Applied to every window (main and dynamic) so new windows
 /// match — the old code only did this for "main".
@@ -115,10 +156,41 @@ fn apply_window_chrome(window: &WebviewWindow) {
 
     #[cfg(target_os = "windows")]
     {
-        // Prefer Mica on Win11; fall back to Acrylic on Win10.
-        if apply_mica(window, Some(true)).is_err() {
-            let _ = apply_acrylic(window, Some((18, 18, 18, 125)));
-        }
+        // Prefer ACRYLIC, with Mica only as a fallback — the opposite of the
+        // obvious ordering, and deliberate.
+        //
+        // The two materials are not interchangeable. Mica samples the desktop
+        // WALLPAPER (blurred + tinted) and ignores other windows by design.
+        // Acrylic live-blurs whatever is actually behind the window, apps
+        // included. macOS uses NSVisualEffectMaterial::HudWindow, which blurs
+        // what's behind it — so Acrylic, not Mica, is the material this design
+        // was built around, and preferring Mica made Windows quietly diverge.
+        //
+        // Observed on Windows 11 build 26100: Mica applied successfully and
+        // looked almost flat (a solid-colour desktop gives it nothing to
+        // sample) and never reacted to windows behind — correct Mica, wrong
+        // material for us.
+        //
+        // Trade-off, per window-vibrancy's own docs: Acrylic has "bad
+        // performance when resizing/dragging the window" on Win10 v1903+ and
+        // Win11 22000. Mica is the cheaper effect, which is why it stays the
+        // fallback rather than being dropped.
+        //
+        // Report which one took: swallowing both results made a real failure
+        // indistinguishable from a working-but-invisible effect. Note a
+        // successful call here still shows nothing if the frontend paints an
+        // opaque backdrop (see `backdropMode` in web/src/lib/shell.ts) or if
+        // the user has transparency effects off in Settings.
+        let outcome = match apply_acrylic(window, Some(ACRYLIC_TINT)) {
+            Ok(()) => "acrylic".to_string(),
+            Err(acrylic_err) => match apply_mica(window, Some(true)) {
+                Ok(()) => format!("mica (acrylic: {acrylic_err})"),
+                Err(mica_err) => {
+                    format!("NONE (acrylic: {acrylic_err}; mica: {mica_err})")
+                }
+            },
+        };
+        report_backdrop(window, &outcome);
     }
 
     // Linux is compositor-dependent — the CSS gradient fallback handles it.
