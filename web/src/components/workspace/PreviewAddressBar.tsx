@@ -59,6 +59,8 @@ interface Props {
   /** Open the dev-server terminal sheet. In preview mode this lives in the
    *  ports menu (after the detected ports) rather than as a toolbar icon. */
   onOpenTerminal?: () => void;
+  /** Open the "Configure dev server" form (command · port · url). */
+  onConfigure?: () => void;
 }
 
 export function PreviewAddressBar({
@@ -73,6 +75,7 @@ export function PreviewAddressBar({
   activeProjectId,
   onSelectProject,
   onOpenTerminal,
+  onConfigure,
 }: Props) {
   const [draft, setDraft] = useState(url);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -272,21 +275,40 @@ export function PreviewAddressBar({
           </>
         )}
 
-        {/* Dev-server terminal — its own row (sits after any detected ports). */}
-        {onOpenTerminal && (
+        {/* Dev-server terminal + config — sit after any detected ports. */}
+        {(onOpenTerminal || onConfigure) && (
           <>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                onOpenTerminal();
-              }}
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-foreground/75 transition-colors hover:bg-white/[0.06] hover:text-foreground"
-            >
-              <TerminalGlyph size={13} className="shrink-0 text-foreground/55" />
-              <span className="truncate">Dev-server terminal</span>
-            </button>
+            {onOpenTerminal && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onOpenTerminal();
+                }}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-foreground/75 transition-colors hover:bg-white/[0.06] hover:text-foreground"
+              >
+                <TerminalGlyph size={13} className="shrink-0 text-foreground/55" />
+                <span className="truncate">Dev-server terminal</span>
+              </button>
+            )}
+            {onConfigure && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onConfigure();
+                }}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-foreground/75 transition-colors hover:bg-white/[0.06] hover:text-foreground"
+              >
+                <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-foreground/55">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                <span className="truncate">Configure dev server…</span>
+              </button>
+            )}
             <div className="mx-1 my-1 h-px bg-white/[0.06]" />
           </>
         )}

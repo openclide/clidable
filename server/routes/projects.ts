@@ -23,14 +23,22 @@ import {
   startDevServer,
   stopDevServer,
 } from "../projects/dev-server";
+import {
+  detectLaunchPlan,
+  readLaunchConfig,
+  writeLaunchConfig,
+} from "../projects/launch-config";
 import { PROJECT_TEMPLATES } from "../../shared/types";
 import type {
   CreateProjectRequest,
   DevServerRequest,
+  LaunchConfig,
+  LaunchConfigResponse,
   ListProjectsResponse,
   OpenProjectRequest,
   ProjectTemplateId,
   RemoveProjectRequest,
+  SaveLaunchConfigRequest,
   TouchProjectRequest,
 } from "../../shared/types";
 
@@ -172,6 +180,49 @@ export async function projectDevStatusHandler(req: Request): Promise<Response> {
   const projectPath = new URL(req.url).searchParams.get("projectPath");
   if (!projectPath) return err(400, "missing 'projectPath' query param");
   return Response.json(await devServerStatus(projectPath));
+}
+
+/* --- per-project launch config (.clidable/launch.json) --- */
+
+export async function projectLaunchConfigGetHandler(
+  req: Request,
+): Promise<Response> {
+  const projectPath = new URL(req.url).searchParams.get("projectPath");
+  if (!projectPath) return err(400, "missing 'projectPath' query param");
+  try {
+    const [config, { framework }] = await Promise.all([
+      readLaunchConfig(projectPath),
+      detectProject(projectPath),
+    ]);
+    const detected = await detectLaunchPlan(projectPath, framework);
+    const body: LaunchConfigResponse = { config, detected };
+    return Response.json(body);
+  } catch (e) {
+    return err(500, msg(e), "[projects] launch-config read failed:");
+  }
+}
+
+export async function projectLaunchConfigSaveHandler(
+  req: Request,
+): Promise<Response> {
+  let body: SaveLaunchConfigRequest;
+  try {
+    body = (await req.json()) as SaveLaunchConfigRequest;
+  } catch {
+    return err(400, "invalid JSON body");
+  }
+  if (typeof body.projectPath !== "string" || body.projectPath.length === 0) {
+    return err(400, "missing 'projectPath'");
+  }
+  if (!body.config || typeof body.config !== "object") {
+    return err(400, "missing 'config'");
+  }
+  try {
+    await writeLaunchConfig(body.projectPath, body.config as LaunchConfig);
+    return Response.json({ ok: true });
+  } catch (e) {
+    return err(500, msg(e), "[projects] launch-config save failed:");
+  }
 }
 
 function msg(e: unknown): string {

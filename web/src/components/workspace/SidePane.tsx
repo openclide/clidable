@@ -3,10 +3,12 @@ import type { ProjectFramework } from "@shared/types";
 import { PreviewPane, VIEWPORTS, type Viewport } from "./PreviewPane";
 import { PreviewAddressBar } from "./PreviewAddressBar";
 import { DevTerminalPanel } from "./DevTerminalPanel";
+import { LaunchConfigModal } from "./LaunchConfigModal";
 import { CodePane } from "./CodePane";
 import { TerminalGlyph } from "./TerminalGlyph";
 import type { Project } from "../welcome/data";
 import { setActiveWatchedProject } from "../../lib/file-watch-client";
+import { getLaunchConfig } from "../../lib/launch-config-client";
 import {
   getStoredPreviewUrl,
   isLoopbackHost,
@@ -81,12 +83,34 @@ export function SidePane({
     };
   }, [watchedPath]);
 
-  // Load the stored preview URL when the previewed project changes.
+  // "Configure dev server" modal + the last start error (surfaced instead of
+  // failing silently). Cleared on project switch.
+  const [configOpen, setConfigOpen] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  // Load the stored preview URL when the previewed project changes. The
+  // per-browser address-bar value wins; otherwise adopt the project's saved
+  // `.clidable/launch.json` url (the server-side default — this is what makes a
+  // remote/Tailscale host preview correctly from any browser).
   const projectId = project?.id ?? null;
   const projectPath = project?.path ?? null;
   useEffect(() => {
-    setRawUrl(projectId ? getStoredPreviewUrl(projectId) : "");
-  }, [projectId]);
+    const stored = projectId ? getStoredPreviewUrl(projectId) : "";
+    setRawUrl(stored);
+    setStartError(null);
+    if (!projectPath || stored) return;
+    let cancelled = false;
+    void getLaunchConfig(projectPath)
+      .then((res) => {
+        // Only adopt the config url if nothing else has filled the bar since
+        // (e.g. auto-run resolving first) — avoids a late fetch clobbering it.
+        if (!cancelled && res.config.url) setRawUrl((prev) => prev || res.config.url!);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, projectPath]);
 
   const handleSubmitUrl = (normalized: string) => {
     setRawUrl(normalized);
@@ -147,9 +171,11 @@ export function SidePane({
             setDevRunning(true);
             handleSubmitUrl(url);
           }
-        } catch {
-          // No dev script / failed to start — leave the preview empty; the
-          // user can still run it manually with the ▶ button.
+        } catch (e) {
+          // Auto-run failed (no dev script, wrong command, port never came up).
+          // Surface why — quietly, as a dismissible hint — so "nothing started"
+          // isn't a mystery; the ▶ button and Configure dev server are the fix.
+          if (!cancelled) setStartError((e as Error).message);
         } finally {
           if (!cancelled) setDevBusy(false);
         }
@@ -183,6 +209,7 @@ export function SidePane({
   const toggleDevServer = async () => {
     if (!projectPath) return;
     setDevBusy(true);
+    setStartError(null);
     try {
       if (devRunning) {
         await stopDevServer(projectPath);
@@ -197,7 +224,12 @@ export function SidePane({
         handleSubmitUrl(url); // auto-fill from the port we assigned
       }
     } catch (e) {
+      // Surface the failure (no dev command, port never came up, …) instead of
+      // leaving the user on an empty preview, and open the terminal so they can
+      // see the actual output.
       console.error("[sidepane] dev server toggle failed", e);
+      setStartError((e as Error).message);
+      if (!devRunning) onTermOpenChange(true);
     } finally {
       setDevBusy(false);
     }
@@ -252,6 +284,7 @@ export function SidePane({
             activeProjectId={previewProjectId}
             onSelectProject={onPreviewProjectChange}
             onOpenTerminal={projectPath ? () => onTermOpenChange(true) : undefined}
+            onConfigure={projectPath ? () => setConfigOpen(true) : undefined}
           />
           <ViewportSwitcher value={viewport} onChange={setViewport} />
         </div>
@@ -299,32 +332,68 @@ export function SidePane({
             onReload={handleReload}
           />
 
-          {/* Detected dev-server chip (M-C). Dismissible; never auto-hijacks. */}
-          {suggestion && mode === "preview" && (
-            <div className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center">
-              <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/[0.1] bg-black/65 px-3 py-1.5 text-[11.5px] text-foreground/85 shadow-[0_10px_30px_rgba(0,0,0,0.5)] backdrop-blur-md">
-                <span aria-hidden className="size-1.5 rounded-full bg-emerald-400" />
-                <span>Dev server on {portLabel(suggestion.url)}</span>
-                <button
-                  type="button"
-                  onClick={() => handleSubmitUrl(suggestion.url)}
-                  className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-white/20"
-                >
-                  Open
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setDismissed((s) => new Set(s).add(suggestion.url))
-                  }
-                  aria-label="Dismiss"
-                  className="flex size-4 items-center justify-center rounded text-foreground/40 transition-colors hover:text-foreground"
-                >
-                  <svg viewBox="0 0 24 24" width={11} height={11} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M6 6l12 12M18 6L6 18" />
+          {/* Preview overlays — one stacking column so a start-failure banner and
+              the detected-server chip can both show without landing on top of
+              each other (they used to share `top-4`). */}
+          {mode === "preview" && (startError || suggestion) && (
+            <div className="pointer-events-none absolute inset-x-0 top-4 z-10 flex flex-col items-center gap-2 px-4">
+              {/* Start-failure banner — so a dev server that couldn't launch says
+                  why (and offers the fix) instead of leaving a blank preview. */}
+              {startError && (
+                <div className="pointer-events-auto flex max-w-md items-start gap-2 rounded-xl border border-amber-500/25 bg-black/75 px-3 py-2 text-[11.5px] leading-relaxed text-amber-200/95 shadow-[0_10px_30px_rgba(0,0,0,0.5)] backdrop-blur-md">
+                  <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
+                    <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
                   </svg>
-                </button>
-              </div>
+                  <span className="min-w-0">{startError}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStartError(null);
+                      setConfigOpen(true);
+                    }}
+                    className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-white/20"
+                  >
+                    Configure
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStartError(null)}
+                    aria-label="Dismiss"
+                    className="flex size-4 shrink-0 items-center justify-center rounded text-foreground/40 transition-colors hover:text-foreground"
+                  >
+                    <svg viewBox="0 0 24 24" width={11} height={11} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
+              {/* Detected dev-server chip (M-C). Dismissible; never auto-hijacks. */}
+              {suggestion && (
+                <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/[0.1] bg-black/65 px-3 py-1.5 text-[11.5px] text-foreground/85 shadow-[0_10px_30px_rgba(0,0,0,0.5)] backdrop-blur-md">
+                  <span aria-hidden className="size-1.5 rounded-full bg-emerald-400" />
+                  <span>Dev server on {portLabel(suggestion.url)}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleSubmitUrl(suggestion.url)}
+                    className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-white/20"
+                  >
+                    Open
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDismissed((s) => new Set(s).add(suggestion.url))
+                    }
+                    aria-label="Dismiss"
+                    className="flex size-4 items-center justify-center rounded text-foreground/40 transition-colors hover:text-foreground"
+                  >
+                    <svg viewBox="0 0 24 24" width={11} height={11} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -357,6 +426,35 @@ export function SidePane({
           />
         </BottomSheet>
       )}
+
+      <LaunchConfigModal
+        open={configOpen}
+        projectPath={projectPath}
+        projectName={project?.name}
+        onClose={() => setConfigOpen(false)}
+        onSaved={(cfg) => {
+          // Point the preview at the new URL immediately when one was set, so
+          // the effect of a remote/Tailscale override is visible without a
+          // reload. Command/port changes apply on the next Run.
+          setStartError(null);
+          if (cfg.url) {
+            handleSubmitUrl(cfg.url);
+            return;
+          }
+          // Override cleared — drop the per-browser copy too, otherwise the
+          // preview stays stranded on the URL the user just removed. Fall back
+          // to the running dev server's own address when there is one.
+          if (projectId) setStoredPreviewUrl(projectId, "");
+          setRawUrl("");
+          if (projectPath) {
+            void getDevServerStatus(projectPath)
+              .then((s) => {
+                if (s.running && s.url) handleSubmitUrl(s.url);
+              })
+              .catch(() => {});
+          }
+        }}
+      />
     </section>
   );
 }

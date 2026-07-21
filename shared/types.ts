@@ -379,9 +379,10 @@ export interface DevServerRequest {
 }
 
 export interface StartDevServerResponse {
-  /** The (free) port the dev server was assigned. */
+  /** The port the dev server was assigned (free-scanned, or the configured fixed port). */
   port: number;
-  /** `http://localhost:<port>` — ready to drop into the preview. */
+  /** The URL to drop into the preview — the configured `url` override when set,
+   *  else `http://localhost:<port>`. */
   url: string;
 }
 
@@ -391,6 +392,50 @@ export interface DevServerStatusResponse {
   url: string | null;
   /** Recent stdout/stderr lines (most-recent last), for a lightweight log peek. */
   logs: string[];
+}
+
+/* --- Per-project launch config (.clidable/launch.json) --- */
+
+/**
+ * User overrides for how a project's dev server starts and is previewed.
+ * All fields optional; a blank/missing field falls back to auto-detection.
+ * Persisted to `<project>/.clidable/launch.json` so it travels with the repo
+ * and applies across browsers/machines — unlike the per-browser address bar.
+ */
+export interface LaunchConfig {
+  /** Shell command to launch the dev server, e.g. "npm run dev". Blank → detected. */
+  command?: string;
+  /** Port the dev server listens on. Blank → detected framework default (free-scanned). */
+  port?: number;
+  /** URL the preview loads, e.g. a Tailscale/remote host. Blank → http://localhost:<port>. */
+  url?: string;
+}
+
+/**
+ * Auto-detected launch defaults — what runs when launch.json leaves a field
+ * blank. Drives the config form's placeholders and the "just works" path.
+ */
+export interface LaunchPlan {
+  /** Detected command, or "" when we don't know how to run this project. */
+  command: string;
+  /** Detected default port (framework convention). */
+  port: number;
+  /** Detected preview URL (`http://localhost:<port>`), or "" when not runnable. */
+  url: string;
+  /** True when a command was detected (has a dev script + a known framework). */
+  runnable: boolean;
+}
+
+export interface LaunchConfigResponse {
+  /** The saved overrides (possibly all-blank when no file exists yet). */
+  config: LaunchConfig;
+  /** Auto-detected defaults, for the form's placeholders. */
+  detected: LaunchPlan;
+}
+
+export interface SaveLaunchConfigRequest {
+  projectPath: string;
+  config: LaunchConfig;
 }
 
 export interface TouchProjectRequest {

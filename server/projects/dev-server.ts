@@ -21,41 +21,7 @@ import {
   recordDetectedUrl,
   removeDetectedUrl,
 } from "../preview/detector";
-
-interface DevPlan {
-  cmd: (port: number) => string[];
-  env?: (port: number) => Record<string, string>;
-  defaultPort: number;
-}
-
-// Two launch shapes: the vite family takes a `--port`/`--host` flag; everyone
-// else reads PORT from the env. Only the default port varies per framework.
-const flagPlan = (defaultPort: number): DevPlan => ({
-  cmd: (p) => ["bun", "run", "dev", "--port", String(p), "--host", "127.0.0.1"],
-  defaultPort,
-});
-const envPlan = (defaultPort: number): DevPlan => ({
-  cmd: () => ["bun", "run", "dev"],
-  env: (p) => ({ PORT: String(p) }),
-  defaultPort,
-});
-
-/** How to run + inject the port per framework. Absent = no known dev command
- *  (python / rust / go / expo / unknown run their server in the terminal). */
-const DEV_PLANS: Partial<Record<ProjectFramework, DevPlan>> = {
-  vite: flagPlan(5173),
-  sveltekit: flagPlan(5173),
-  astro: flagPlan(4321),
-  nextjs: envPlan(3000),
-  nuxt: envPlan(3000),
-  remix: envPlan(3000),
-  hono: envPlan(3000),
-  node: envPlan(3000),
-};
-
-function devPlan(framework: ProjectFramework): DevPlan | null {
-  return DEV_PLANS[framework] ?? null;
-}
+import { buildCommand, resolveLaunch } from "./launch-config";
 
 type DataSub = (chunk: Uint8Array) => void;
 type ExitSub = () => void;
@@ -69,6 +35,9 @@ interface RunningDevServer {
   terminal: Bun.Terminal;
   proc: Bun.Subprocess; // the shell
   port: number;
+  /** The preview URL to surface — the configured `url` override, else
+   *  `http://localhost:<port>`. Kept so status reports the same URL that start did. */
+  url: string;
   /** The dev command we type into the shell — re-typed to restart on the same port. */
   command: string;
   ring: RingBuffer;
@@ -111,62 +80,94 @@ async function doStartDevServer(
   projectPath: string,
   framework: ProjectFramework,
 ): Promise<{ port: number; url: string }> {
-  const plan = devPlan(framework);
-  if (!plan) {
+  const plan = await resolveLaunch(projectPath, framework);
+  if (!plan.customCommand && !plan.detected) {
     throw new Error(
-      `no known dev command for "${framework}" — run your server in the terminal`,
+      "No dev command detected for this project — set one in “Configure dev server”.",
     );
   }
 
-  let entry = running.get(projectPath);
-  if (!entry || entry.exited) {
-    // Fresh shell: pick a free port, build the dev command, spawn, then type it
-    // once the interactive shell has printed its first prompt.
-    const port = await findFreePort(plan.defaultPort);
+  const existing = running.get(projectPath);
+  const alive = existing && !existing.exited ? existing : null;
+
+  // Decide the port BEFORE building the command so a detected command's injected
+  // `--port` always matches what we probe. An alive shell keeps its own port
+  // unless the config now pins a different one. A custom command can't have a
+  // scanned port injected, so it takes the configured/framework port and relies
+  // on PORT in the env.
+  const port =
+    plan.fixedPort ??
+    alive?.port ??
+    (plan.customCommand ? plan.defaultPort : await findFreePort(plan.defaultPort));
+  const command =
+    plan.customCommand ??
+    buildCommand(plan.detected!.pm, plan.detected!.script, plan.detected!.inject, port);
+  const url = plan.urlOverride ?? `http://localhost:${port}`;
+
+  // Reuse the shell only if it would run the same thing. Re-typing a stale
+  // command would silently ignore a command/port the user just changed in
+  // "Configure dev server" (the shell survives Ctrl-C, so the entry outlives a
+  // Stop). A url-only edit needs no respawn.
+  let entry = alive && alive.port === port && alive.command === command ? alive : null;
+  if (entry) {
+    entry.url = url;
+    if (await isPortUp(entry.port)) return { port: entry.port, url: entry.url };
+    // Shell alive but the dev server isn't (e.g. after Ctrl-C) — re-run it on
+    // the same port, in the same shell.
+    writeCommand(entry, entry.command);
+  } else {
+    if (alive) disposeShell(projectPath, alive); // config changed → drop the stale shell
     try {
-      const command = buildCommand(plan, port);
-      entry = spawnShell(projectPath, port, command);
+      entry = spawnShell(projectPath, port, url, command);
       running.set(projectPath, entry);
       await delay(300);
       writeCommand(entry, command);
     } finally {
       reservedPorts.delete(port); // now tracked via `running`
     }
-  } else if (await isPortUp(entry.port)) {
-    return { port: entry.port, url: `http://localhost:${entry.port}` };
-  } else {
-    // Shell alive but the dev server isn't (e.g. after Ctrl-C) — re-run it on
-    // the same port, in the same shell.
-    writeCommand(entry, entry.command);
   }
 
-  const url = `http://localhost:${entry.port}`;
   const ready = await waitForPort(entry.port);
   if (!ready) {
     // Don't return/record a URL nothing is listening on — the broken script's
     // output is in the terminal for the user to see.
-    throw new Error(
-      `dev server didn't start listening on port ${entry.port} — check the terminal for errors`,
-    );
+    throw new Error(startFailureMessage(entry.port, plan.customCommand !== null));
   }
-  recordDetectedUrl(projectPath, `dev:${entry.port}`, url, "spawn");
-  return { port: entry.port, url };
+  // Record the loopback URL (not the override) for the reverse-proxy allowlist,
+  // which is keyed on the actually-listening local port.
+  recordDetectedUrl(projectPath, `dev:${entry.port}`, `http://localhost:${entry.port}`, "spawn");
+  return { port: entry.port, url: entry.url };
 }
 
-/** Build the shell command line from a plan, inlining any env assignments
- *  (e.g. `PORT=3001 bun run dev`). Our values are simple literals — no quoting. */
-function buildCommand(plan: DevPlan, port: number): string {
-  const cmd = plan.cmd(port).join(" ");
-  const env = plan.env?.(port) ?? {};
-  const prefix = Object.entries(env)
-    .map(([k, v]) => `${k}=${v}`)
-    .join(" ");
-  return prefix ? `${prefix} ${cmd}` : cmd;
+/**
+ * Tear down a shell we're replacing because the launch config changed. Runs the
+ * normal exit cleanup (detector buffer + proxy allowlist for the OLD port) and
+ * drops it from `running`; the real `onExit` that follows early-returns on the
+ * `exited` flag, and handleExit's identity check keeps it from evicting the
+ * replacement entry we set right after.
+ */
+function disposeShell(projectPath: string, entry: RunningDevServer): void {
+  try {
+    entry.proc?.kill();
+  } catch {
+    // already gone
+  }
+  handleExit(projectPath, entry);
+}
+
+/** A port that never came up. When the user supplied the command we can't know
+ *  which port it binds, so point them at the setting that fixes it. */
+function startFailureMessage(port: number, custom: boolean): string {
+  const base = `dev server didn't start listening on port ${port} — check the terminal for errors`;
+  return custom
+    ? `${base}. If your command binds a different port, set “Local port” in “Configure dev server” to match.`
+    : base;
 }
 
 function spawnShell(
   projectPath: string,
   port: number,
+  url: string,
   command: string,
 ): RunningDevServer {
   // terminal/proc are assigned immediately below; the data/exit callbacks that
@@ -175,6 +176,7 @@ function spawnShell(
     terminal: undefined as unknown as Bun.Terminal,
     proc: undefined as unknown as Bun.Subprocess,
     port,
+    url,
     command,
     ring: { chunks: [], bytes: 0 },
     dataSubs: new Set(),
@@ -203,6 +205,10 @@ function spawnShell(
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
       FORCE_COLOR: "1",
+      // Export the resolved port so a *custom* command that reads PORT (the
+      // common convention) binds where we probe, without the user hardcoding it.
+      // Detected commands inject the port themselves and don't rely on this.
+      PORT: String(port),
     },
     onExit: () => handleExit(projectPath, entry),
   });
@@ -415,7 +421,7 @@ export async function devServerStatus(
     return {
       running: true,
       port: entry.port,
-      url: `http://localhost:${entry.port}`,
+      url: entry.url,
       logs: [],
     };
   }
