@@ -15,7 +15,7 @@
  * NOTE: per CLAUDE.md we never scaffold *our own* repo with these tools —
  * but spawning them to create the *user's* project is exactly the feature.
  */
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readdir, rmdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProjectTemplateId } from "../../shared/types";
 import { openProject } from "./index";
@@ -70,7 +70,21 @@ function scaffoldCommand(
         "--yes",
       ];
     case "hono":
-      return ["bunx", "create-hono@latest", name, "--template", "bun"];
+      // Unlike the others, create-hono has no --skip-install: it *always* asks
+      // "install dependencies?" unless --install is passed, and with stdin
+      // closed that prompt throws (while still exiting 0 — see the empty-output
+      // guard below). --pm picks the manager its second prompt would ask for.
+      // The uniform `bun install` afterwards is then a cheap no-op.
+      return [
+        "bunx",
+        "create-hono@latest",
+        name,
+        "--template",
+        "bun",
+        "--pm",
+        "bun",
+        "--install",
+      ];
   }
 }
 
@@ -101,12 +115,8 @@ export async function scaffoldProject(input: ScaffoldInput): Promise<Project> {
     // Blank: no toolchain, nothing to install — it's an empty folder.
     await scaffoldBlank(target, name);
   } else {
-    await runScaffolder(cmd, input.parentDir);
-    if (!(await pathExists(target))) {
-      throw new Error(
-        `scaffolder finished but produced no "${name}" folder — check the template`,
-      );
-    }
+    const stderr = await runScaffolder(cmd, input.parentDir);
+    await assertProducedFiles(target, name, cmd, stderr);
     // Install deps so the project is immediately startable (▶). Uniform
     // across templates — the scaffolders themselves are inconsistent about it.
     await installDeps(target);
@@ -187,9 +197,41 @@ async function spawnWithTimeout(
   return { exitCode, stderr: await stderrPromise, timedOut };
 }
 
+/**
+ * A zero exit code is not proof a scaffolder worked. create-hono creates the
+ * target directory, hits its "install dependencies?" prompt, throws on our
+ * closed stdin — and *still* exits 0, leaving an empty folder we'd happily
+ * register as a project. So the contract is "did it actually write files?",
+ * checked for every template rather than patched per scaffolder.
+ *
+ * An empty leftover is removed so the user can retry the same name. `rmdir`
+ * (not `rm -rf`) does that safely: it refuses any directory that isn't empty,
+ * so it can never take real files with it.
+ */
+export async function assertProducedFiles(
+  target: string,
+  name: string,
+  cmd: string[],
+  stderr: string,
+): Promise<void> {
+  const entries = await readdir(target).catch(() => null);
+  if (entries && entries.length > 0) return;
+  if (entries) await rmdir(target).catch(() => {});
+  const detail = stderr.trim().slice(-500);
+  throw new Error(
+    // The whole command, not cmd[1] — for the vite templates that word is
+    // "create" (`bun create vite …`), which names nothing the user can act on.
+    `\`${cmd.join(" ")}\` exited successfully but created no files in "${name}" — ` +
+      `it likely asked a question (scaffolders run non-interactively here).` +
+      (detail ? `\n${detail}` : ""),
+  );
+}
+
 /* --- run a scaffolder non-interactively --- */
 
-async function runScaffolder(cmd: string[], cwd: string): Promise<void> {
+/** Runs the scaffolder and returns its stderr, which is the only clue when a
+ *  scaffolder fails while reporting success. */
+async function runScaffolder(cmd: string[], cwd: string): Promise<string> {
   const { exitCode, stderr, timedOut } = await spawnWithTimeout(cmd, cwd, {
     ...process.env,
     CI: "1",
@@ -206,6 +248,7 @@ async function runScaffolder(cmd: string[], cwd: string): Promise<void> {
       `scaffold command failed (exit ${exitCode}): ${cmd.join(" ")}\n${stderr.slice(0, 1500)}`,
     );
   }
+  return stderr;
 }
 
 /* --- git init + initial commit (best-effort) --- */
