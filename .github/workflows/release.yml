@@ -50,6 +50,12 @@ jobs:
             [bun-darwin-x64]=clidable-server-darwin-x64
             [bun-darwin-arm64]=clidable-server-darwin-arm64
             [bun-windows-x64]=clidable-server-windows-x64.exe
+            # Windows on ARM (Snapdragon X and friends). Missing here by
+            # oversight, which left those machines emulating the x64 build for no
+            # reason. Verified on Bun 1.3.14: `--target=bun-windows-arm64`
+            # produces a "PE32+ executable (console) Aarch64" binary. Earlier Bun
+            # versions were not checked.
+            [bun-windows-arm64]=clidable-server-windows-arm64.exe
           )
           for target in "${!targets[@]}"; do
             bun scripts/build.ts --compile --target="$target"

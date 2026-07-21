@@ -54,7 +54,14 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-test("adopts a dev server already serving from inside the project", async () => {
+// Adoption is POSIX-only by construction: `projectOwnedPids` returns [] on
+// Windows because identifying a listener's working directory needs lsof. Both
+// tests are skipped there rather than one — the negative case would otherwise
+// pass for the WRONG reason (no adoption ever happens), which is worse than
+// no coverage because it reads as a green Windows assertion.
+const posixOnly = test.skipIf(process.platform === "win32");
+
+posixOnly("adopts a dev server already serving from inside the project", async () => {
   const port = await freePort();
   const dir = await project(port);
   await serveFrom(dir, port);
@@ -67,7 +74,7 @@ test("adopts a dev server already serving from inside the project", async () => 
   expect(stopDevServer(dir)).toBe(true);
 });
 
-test("does not adopt a port held from outside the project", async () => {
+posixOnly("does not adopt a port held from outside the project", async () => {
   const port = await freePort();
   const dir = await project(port);
   const other = await mkdtemp(join(tmpdir(), "clidable-other-"));

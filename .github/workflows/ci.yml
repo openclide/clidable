@@ -1,13 +1,19 @@
 # CI — every push to main and every PR.
 #
-# Two independent jobs:
-#   check  — Bun side: typecheck, tests, both production builds. The build
-#            script self-verifies (Tailwind actually compiled, no source-tree
-#            mutation, compiled binary boots + serves compiled CSS), so a green
-#            `build:compile` here means a genuinely runnable artifact.
-#   tauri  — Rust side on Linux. CLAUDE.md: a green macOS `cargo check` says
-#            nothing about the Linux #[cfg] branch (gtk/webkit); this job is
-#            where that branch actually gets type-checked.
+# Three independent jobs:
+#   check   — Bun side: typecheck, tests, both production builds. The build
+#             script self-verifies (Tailwind actually compiled, no source-tree
+#             mutation, compiled binary boots + serves compiled CSS), so a green
+#             `build:compile` here means a genuinely runnable artifact.
+#   tauri   — Rust side on Linux. CLAUDE.md: a green macOS `cargo check` says
+#             nothing about the Linux #[cfg] branch (gtk/webkit); this job is
+#             where that branch actually gets type-checked.
+#   windows — Bun AND Rust on a real Windows runner. Neither of the jobs above
+#             can see a Windows bug: `which` vs `where.exe`, PowerShell hook
+#             scripts, ConPTY, %APPDATA% paths, path separators. That gap let a
+#             hard ENOENT ship — agent detection spawned `which`, which does not
+#             exist on Windows, so EVERY terminal spawn failed there while both
+#             ubuntu jobs stayed green. This job is the guard against a repeat.
 name: CI
 
 on:
@@ -65,4 +71,50 @@ jobs:
           workspaces: src-tauri
 
       - name: cargo check (Linux branch)
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # ConPTY landed in 1.3.14. Below that `Bun.Terminal` is POSIX-only and
+          # every PTY in the app fails to open on Windows — keep this in step
+          # with the `engines.bun` floor in package.json.
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The suite is platform-aware: hook scripts assert PowerShell on Windows
+      # and sh elsewhere, and resolveBin asserts the PATH lookup actually
+      # resolves — which is what `which` vs `where.exe` broke.
+      - name: Typecheck + tests (Windows)
+        run: |
+          bun run typecheck
+          bun run test
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # ONE compile, doing two jobs. Deliberately no --target: with one,
+      # scripts/build.ts treats it as a cross-compile and downgrades its check to
+      # "does the file exist", skipping the boot verification entirely. Without
+      # one it compiles for the host — which on this runner IS windows-x64 — so
+      # the binary is booted and asked for /api/health and compiled CSS, and then
+      # staged under the triple name tauri-build needs.
+      #
+      # It has to run before cargo: tauri-build resolves `externalBin` at
+      # build-script time and hard-fails if the sidecar is missing.
+      # (rustc must be on PATH first — build-sidecar reads the host triple from it.)
+      - name: Build + boot-verify the server, stage it as the sidecar
+        run: bun scripts/build-sidecar.ts
+
+      - name: cargo check (Windows branch)
         run: cargo check --manifest-path src-tauri/Cargo.toml

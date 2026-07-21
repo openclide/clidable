@@ -155,7 +155,10 @@ function checkCss(label: string, css: string): string[] {
 /** Boot dist/clidable-server on an ephemeral port with a scratch HOME and
  *  assert it serves health + Tailwind-compiled CSS. */
 async function verifyCompiledBinary(): Promise<string[]> {
-  const bin = join(dist, "clidable-server");
+  // Bun appends .exe on Windows, exactly as the cross-compile branch above
+  // already accounts for. Without this the host build fails its own boot check
+  // on a Windows runner with "binary not found where compile.outfile pointed".
+  const bin = join(dist, process.platform === "win32" ? "clidable-server.exe" : "clidable-server");
   if (!(await Bun.file(bin).exists())) {
     return [`${bin}: binary not found where compile.outfile pointed`];
   }

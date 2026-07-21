@@ -70,9 +70,18 @@ Path aliases: `@/*` → `web/src`, `@server/*`, `@shared/*`.
 - **Tauri 2 layout is lib-first**: `src/lib.rs` has the app; `src/main.rs` just calls into it (mobile-ready).
 - **Window vibrancy** (real desktop-behind blur) via `window-vibrancy` crate:
   - macOS: `NSVisualEffectMaterial::HudWindow`
-  - Windows: try Mica (Win11) → Acrylic fallback (Win10)
-  - Linux: compositor-dependent, fall back to gradient
-- Combined with `"transparent": true` in `tauri.conf.json` and `body[data-shell="tauri"] { background: transparent }` in CSS.
+  - Windows: **Acrylic first**, Mica only as fallback. Not the obvious order:
+    Mica samples the desktop *wallpaper* and ignores other windows, while
+    Acrylic live-blurs what's actually behind — which is what HudWindow does,
+    so Acrylic is the material this design was built around.
+  - Linux: **no support at all** (`window-vibrancy` is macOS + Windows only,
+    and there's no cross-desktop blur API) — it paints the gradient instead.
+- Combined with `"transparent": true` in `tauri.conf.json` and
+  `html[data-backdrop="vibrancy"] { background: transparent }` in CSS. The
+  attribute comes from `backdropMode()` in [shell.ts](web/src/lib/shell.ts) —
+  keyed on whether the OS paints behind the window, NOT on which shell is
+  running. Conflating those is what shipped Linux transparent with nothing
+  behind it.
 - **`#[tauri::command]` functions that wait on a main-thread callback MUST be `async`.** Synchronous commands run *on the main thread*; if the body blocks (e.g. waiting on a channel) for a result that is itself delivered on the main thread, it self-deadlocks. The `capture_webview` screenshot command hit exactly this — `WKWebView.takeSnapshot`'s completion fires on the main thread, so a sync command blocked forever until the timeout freed the thread. Making the command `async` moves it to a worker thread and unblocks main. (Shadow-git ops don't have this problem — they run server-side in Bun via `Bun.spawn`, off any UI thread.)
 - **WKWebView screenshots** (`capture_webview`, desktop checkpoint thumbnails): snapshot the webview itself, not the OS screen — permission-free (no Screen Recording TCC prompt) and captures cross-origin iframe pixels. Needs a *non-nil* `WKSnapshotConfiguration` with `afterScreenUpdates = false`; a nil config defaults that to true and hangs forever waiting for a screen update on static content.
 
@@ -121,15 +130,49 @@ impls, so a green macOS check says nothing about the other two. To
 type-check the **Windows** branch from a Mac (no Windows box needed):
 
 ```bash
-# `rustup target add x86_64-pc-windows-msvc` once. Two gotchas:
-#  1. Homebrew rust shadows rustup — use the rustup toolchain's own
+# `rustup target add x86_64-pc-windows-msvc` once. Three gotchas:
+#  1. The sidecar must EXIST first. `externalBin` is resolved by
+#     tauri-build at build-script time, so without a binary named for
+#     the target triple the check dies before compiling a line:
+#     "resource path `binaries/clidable-server-…exe` doesn't exist".
+#  2. Homebrew rust shadows rustup — use the rustup toolchain's own
 #     cargo/rustc by absolute path, or the host std won't have the target.
-#  2. tauri-winres needs a resource compiler → put Homebrew llvm's
+#  3. tauri-winres needs a resource compiler → put Homebrew llvm's
 #     llvm-rc on PATH (`brew install llvm`).
+bun scripts/build-sidecar.ts --target=bun-windows-x64 \
+  --triple=x86_64-pc-windows-msvc            # gotcha 1
 TC=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin
 PATH="/opt/homebrew/opt/llvm/bin:$PATH" RUSTC="$TC/rustc" \
   "$TC/cargo" check --target x86_64-pc-windows-msvc --target-dir target/wincheck
 ```
+
+To produce a **runnable** Windows binary from a Mac (not just a type
+check), Tauri's documented cross-compile runner does it — NSIS only, no
+`.msi` (WiX is Windows-only):
+
+```bash
+cargo install cargo-xwin        # once
+# RUSTUP_TOOLCHAIN is the same shadowing gotcha as above: with Homebrew rust on
+# PATH and no rustup default set, this dies with "rustup could not choose a
+# version of cargo to run". --no-bundle is the path that's actually been
+# exercised; it emits a bare .exe at
+# src-tauri/target/<triple>/release/clidable.exe. Dropping it attempts an NSIS
+# bundle, which needs extra tooling and has NOT been verified here.
+PATH="/opt/homebrew/opt/llvm/bin:$PATH" RUSTUP_TOOLCHAIN=stable \
+  bun run tauri build --runner cargo-xwin \
+    --target x86_64-pc-windows-msvc --no-bundle
+```
+
+The sidecar has to exist for this too (same `externalBin` rule as the type
+check), and it must match the triple you are building for. To RUN the result,
+put `clidable-server.exe` beside `clidable.exe`.
+
+CI covers all of this properly: the `windows` job in
+[ci.yml](.github/workflows/ci.yml) runs the Bun suite, the compiled-binary
+boot check, and `cargo check` on a real `windows-latest` runner. It exists
+because a Windows-only bug (agent detection spawning `which`, which does
+not exist there, so every terminal spawn died) shipped while both ubuntu
+jobs stayed green.
 
 The **Linux** branch can't be cross-checked this way: the gtk/webkit
 `-sys` build scripts need the actual system libs via pkg-config, which a

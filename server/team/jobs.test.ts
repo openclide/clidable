@@ -14,7 +14,11 @@ function fakeJob(id: string, script: string, parse: AnswerParse, agent: Delegate
   });
 }
 
-describe("TeamJob", () => {
+// The code under test is platform-agnostic; the HARNESS is not — `fakeJob`
+// spawns its scripted delegate through `sh -c`, and there is no sh on Windows.
+// Porting the snippets to cmd/PowerShell would test the harness rewrite rather
+// than TeamJob, so skip instead.
+describe.skipIf(process.platform === "win32")("TeamJob", () => {
   test("completes and captures the answer (raw parse)", async () => {
     const job = fakeJob("job-raw", 'echo "the answer"', { type: "raw" });
     await job.done;

@@ -24,7 +24,11 @@ describe("descendantsOf", () => {
   });
 });
 
-describe("listeningPorts (live)", () => {
+// Live socket enumeration shells out per-OS (lsof / /proc / Get-NetTCPConnection).
+// The Windows path spawns PowerShell per call, which is slow and flaky enough on
+// a CI runner to be worse than no signal. `descendantsOf` above is pure logic and
+// still runs everywhere.
+describe.skipIf(process.platform === "win32")("listeningPorts (live)", () => {
   it("detects a socket this process is listening on", async () => {
     const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
     try {
