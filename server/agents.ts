@@ -116,8 +116,10 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     installHint: "npm i -g @github/copilot",
   },
   // A plain terminal — the user's login shell, not an AI agent. `bin` resolves
-  // to their real shell (see loginShell); it's an absolute path, so it's used
-  // as-is and always counts as "installed". `-l` runs it as an interactive login
+  // to their real shell (see loginShell). On POSIX that's an absolute path, used
+  // as-is, so it always counts as "installed"; on Windows it's the bare
+  // `powershell.exe`, which goes through the PATH lookup like any other bin.
+  // `-l` runs it as an interactive login
   // shell — the Terminal.app convention: for zsh (the macOS default) that sources
   // .zprofile (PATH) AND .zshrc (aliases); it's needed so the packaged app's
   // sidecar — which has a minimal env — picks up the user's PATH. No hook
@@ -138,24 +140,39 @@ const detectionCache = new Map<string, string | null>();
 
 /**
  * Resolve a binary to an absolute path: an absolute/relative path that exists
- * is used directly; otherwise it's looked up on PATH (`which`). Returns null if
- * not found. Results are cached for the lifetime of the process. This is the
- * generic resolver custom-agent recipes use (any `bin`), not just the built-ins.
+ * is used directly; otherwise it's looked up on PATH. Returns null if not found.
+ * Results are cached for the lifetime of the process. This is the generic
+ * resolver custom-agent recipes use (any `bin`), not just the built-ins.
+ *
+ * Uses `Bun.which` rather than shelling out, which matters on two counts:
+ *
+ *   • Portability. This used to exec `which`, which does not exist on Windows —
+ *     and since we exec directly with no shell, that was a hard ENOENT rather
+ *     than a "not found" answer, so EVERY spawn failed there, agents and the
+ *     plain terminal alike.
+ *   • PATH-only resolution. `where.exe`, the obvious Windows swap, searches the
+ *     CURRENT DIRECTORY before PATH — so a stray `claude.exe` in whatever
+ *     directory the server happened to launch from would win over the real
+ *     agent. `Bun.which` searches PATH only (verified: a bare name matching a
+ *     file in cwd resolves to null), which is the semantics the callers assume.
+ *
+ * It also drops a subprocess per lookup.
  */
 export async function resolveBin(bin: string): Promise<string | null> {
   if (detectionCache.has(bin)) return detectionCache.get(bin)!;
   let resolved: string | null = null;
   if (isAbsolute(bin) && existsSync(bin)) {
     // An absolute path is used as-is; a bare/relative name (even one with a
-    // slash) goes through `which` so it resolves against PATH, not the server's
-    // cwd — which differs from the delegate's project dir.
+    // slash) goes through the PATH lookup so it resolves against PATH, not the
+    // server's cwd — which differs from the delegate's project dir.
     resolved = bin;
   } else {
-    const proc = Bun.spawn(["which", bin], { stdout: "pipe", stderr: "pipe" });
-    const code = await proc.exited;
-    if (code === 0) {
-      // `which` prints one path per match; take the first line.
-      resolved = (await new Response(proc.stdout).text()).split("\n")[0]!.trim() || null;
+    try {
+      resolved = Bun.which(bin);
+    } catch {
+      // Never let a lookup failure take down the spawn: "not installed" is the
+      // honest answer and the one every caller already handles.
+      resolved = null;
     }
   }
   detectionCache.set(bin, resolved);
