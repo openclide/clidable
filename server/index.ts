@@ -85,6 +85,7 @@ import {
 import { checkProxyAllowed, isLoopbackHost, parseProxyPath } from "./net/ssrf";
 import { guardApiRoutes, isSameSiteRequest } from "./net/origin";
 import { startPortScanner } from "./preview/port-scan";
+import { shutdownDevServers } from "./projects/dev-server";
 import { devTerminalWebSocketHandler } from "./routes/dev-terminal-ws";
 import { previewEventsWebSocketHandler } from "./routes/preview-events-ws";
 import { proxyHttp, proxyWsTarget } from "./routes/proxy";
@@ -445,10 +446,18 @@ if (!g.__clidableShutdownWired) {
   g.__clidableShutdownWired = true;
   const shutdown = () => {
     if (isCanonicalServer) clearLock();
+    // Take the dev-server shells down with us. They're PTY session leaders, so
+    // without this they re-parent to init and their dev servers keep holding
+    // ports no one can see or stop.
+    shutdownDevServers();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  // Covers the exits no signal announces (parent CLI dies, uncaught throw,
+  // explicit process.exit elsewhere). Sync-only context — the group kill is a
+  // sync syscall, so it still lands.
+  process.on("exit", shutdownDevServers);
 }
 
 console.log(

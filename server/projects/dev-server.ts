@@ -15,6 +15,7 @@
  * dev-server terminal WebSocket (`/api/dev-terminal`) replays + streams into
  * the interactive xterm bottom sheet.
  */
+import { realpath } from "node:fs/promises";
 import type { ProjectFramework } from "../../shared/types";
 import {
   clearTerminal,
@@ -47,7 +48,23 @@ interface RunningDevServer {
 }
 
 const RING_BYTES_CAP = 256 * 1024; // 256 KB of scrollback per shell
+// How long a dev server gets to answer the "are you actually alive?" probe.
+// Generous enough for a cold Next.js route compile, short enough that a hung
+// server doesn't stall Run.
+const HTTP_PROBE_MS = 5_000;
 const running = new Map<string, RunningDevServer>();
+
+/**
+ * Dev servers we did NOT spawn but have adopted: something was already
+ * listening on the project's port from inside the project directory, so it IS
+ * this project's dev server (started in the user's own terminal, or leaked from
+ * a previous Clidable process). We point the preview at it instead of racing
+ * it — starting a second one is at best a duplicate and at worst impossible:
+ * Next.js refuses outright ("Another next dev server is already running") no
+ * matter which port we pass. No shell, so no terminal to attach; Stop still
+ * works because stopping is port-based.
+ */
+const adopted = new Map<string, { port: number; url: string }>();
 
 export interface DevServerStatus {
   running: boolean;
@@ -81,14 +98,44 @@ async function doStartDevServer(
   framework: ProjectFramework,
 ): Promise<{ port: number; url: string }> {
   const plan = await resolveLaunch(projectPath, framework);
+  const existing = running.get(projectPath);
+  const alive = existing && !existing.exited ? existing : null;
+
+  // Nothing of ours is running, but the project's port may already be held by
+  // the project itself — the user's own `npm run dev`, or a dev server leaked
+  // by a previous Clidable process. Never race it. Checked before the "can we
+  // even launch this?" guard below: something already serving the project is
+  // previewable whether or not we'd know how to start it ourselves.
+  const candidate = plan.fixedPort ?? plan.defaultPort;
+  const heldByProject = !alive && (await portOwnedByProject(candidate, projectPath));
+  if (heldByProject && (await isServingHttp(candidate))) {
+    const url = plan.urlOverride ?? `http://localhost:${candidate}`;
+    adopted.set(projectPath, { port: candidate, url });
+    recordDetectedUrl(projectPath, `dev:${candidate}`, `http://localhost:${candidate}`, "spawn");
+    return { port: candidate, url };
+  }
+
   if (!plan.customCommand && !plan.detected) {
     throw new Error(
       "No dev command detected for this project — set one in “Configure dev server”.",
     );
   }
 
-  const existing = running.get(projectPath);
-  const alive = existing && !existing.exited ? existing : null;
+  // Holds the port but answers nothing: a dead dev server for this project.
+  // Nothing can preview it, and (for Next) nothing else can start while it
+  // lives — so take the port back. Only now that we know we have something to
+  // start in its place.
+  if (heldByProject) {
+    console.log(
+      `[dev-server] reclaiming port ${candidate} from an unresponsive dev server for ${projectPath}`,
+    );
+    await killPort(projectPath, candidate);
+    await waitForPortFree(candidate);
+  }
+
+  // Past the adoption check → we own (or are about to own) this project's dev
+  // server; any earlier adoption is stale.
+  adopted.delete(projectPath);
 
   // Decide the port BEFORE building the command so a detected command's injected
   // `--port` always matches what we probe. An alive shell keeps its own port
@@ -303,6 +350,13 @@ export function attachDevTerminal(
   };
 }
 
+/** Port of an adopted (externally started) dev server for this project, or null.
+ *  Lets the terminal endpoint say "no terminal, because we didn't spawn it"
+ *  instead of the misleading "not running". */
+export function adoptedDevServerPort(projectPath: string): number | null {
+  return adopted.get(projectPath)?.port ?? null;
+}
+
 /** Forward stdin to the shell PTY — keystrokes, and control chars like Ctrl-C
  *  (\x03), which the shell's job control turns into SIGINT for the dev server. */
 export function writeDevTerminal(
@@ -341,9 +395,17 @@ export function resizeDevTerminal(
  */
 export function stopDevServer(projectPath: string): boolean {
   const entry = running.get(projectPath);
-  if (!entry || entry.exited) return false;
-  writeDevTerminal(projectPath, "\x03");
-  void killDevServerPort(projectPath);
+  if (entry && !entry.exited) {
+    writeDevTerminal(projectPath, "\x03");
+    void killDevServerPort(projectPath);
+    return true;
+  }
+  // An adopted server has no shell to interrupt — kill it by port. This is the
+  // user's only handle on a dev server leaked by a previous Clidable process.
+  const ext = adopted.get(projectPath);
+  if (!ext) return false;
+  adopted.delete(projectPath);
+  void killPort(projectPath, ext.port);
   return true;
 }
 
@@ -357,8 +419,12 @@ export function stopDevServer(projectPath: string): boolean {
  */
 export async function killDevServerPort(projectPath: string): Promise<void> {
   const entry = running.get(projectPath);
-  if (!entry || entry.exited) return;
-  const { port } = entry;
+  const port = entry && !entry.exited ? entry.port : adopted.get(projectPath)?.port;
+  if (port == null) return;
+  await killPort(projectPath, port);
+}
+
+async function killPort(projectPath: string, port: number): Promise<void> {
   removeDetectedUrl(projectPath, `http://localhost:${port}`); // it's going down
   for (const pid of await pidsOnPort(port)) {
     try {
@@ -410,11 +476,113 @@ async function pidsOnPort(port: number): Promise<number[]> {
   }
 }
 
+/**
+ * Is whatever listens on `port` this project's own dev server? True when the
+ * listener's working directory is the project (or a directory inside it, for a
+ * monorepo package). That's the signal that lets us adopt an already-running
+ * server instead of starting a rival one — and it's deliberately strict:
+ * an unrelated app squatting the port fails the check and we scan on as before.
+ *
+ * POSIX only (`lsof` reports a process's cwd); on Windows this is always false,
+ * so Windows keeps the old scan-to-the-next-free-port behaviour.
+ */
+async function portOwnedByProject(port: number, projectPath: string): Promise<boolean> {
+  if (process.platform === "win32") return false;
+  const pids = await pidsOnPort(port);
+  if (pids.length === 0) return false;
+  // Compare resolved paths: a process's cwd is always fully resolved, while the
+  // project path can be reached through a symlink (on macOS every path under
+  // /tmp or /var already is one), and a raw string compare would miss the match.
+  const root = await realpath(projectPath).catch(() => projectPath);
+  const cwds = await Promise.all(pids.map(processCwd));
+  return cwds.some((cwd) => cwd != null && (cwd === root || cwd.startsWith(`${root}/`)));
+}
+
+/**
+ * Does the port answer an actual HTTP request? A TCP accept is not enough: a
+ * crashed dev server can keep its listening socket open and never reply, which
+ * is a black hole for the preview (and the state a leaked `next dev` ends up
+ * in). Any response — even a 404/500 — counts as alive.
+ */
+async function isServingHttp(port: number): Promise<boolean> {
+  try {
+    await fetch(`http://127.0.0.1:${port}/`, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(HTTP_PROBE_MS),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Wait (briefly) for a port to stop listening after we've killed its owner. */
+async function waitForPortFree(port: number): Promise<void> {
+  const deadline = Date.now() + 4_000;
+  while (Date.now() < deadline) {
+    if (!(await isPortUp(port))) return;
+    await delay(200);
+  }
+}
+
+/** A process's current working directory, or null if it can't be determined. */
+async function processCwd(pid: number): Promise<string | null> {
+  try {
+    const proc = Bun.spawn(["lsof", "-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
+    // -F output is one field per line, prefixed by its type: `n<path>`.
+    for (const line of text.split("\n")) {
+      if (line.startsWith("n/")) return line.slice(1);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Kill every dev-server shell on the way out. Each shell is a PTY session
+ * leader, so its pid doubles as the process-group id — signalling the *group*
+ * takes the dev server (and its children) with it. Without this they re-parent
+ * to init and keep holding their ports forever, invisible to the user: exactly
+ * how a stale `next dev` ends up squatting :3000 across a restart.
+ */
+export function shutdownDevServers(): void {
+  for (const [projectPath, entry] of [...running]) {
+    const pid = entry.proc?.pid;
+    try {
+      if (pid) process.kill(-pid, "SIGKILL");
+    } catch {
+      try {
+        entry.proc?.kill();
+      } catch {
+        // already gone
+      }
+    }
+    handleExit(projectPath, entry);
+  }
+}
+
 export async function devServerStatus(
   projectPath: string,
 ): Promise<DevServerStatus> {
   const entry = running.get(projectPath);
   if (!entry || entry.exited) {
+    const ext = adopted.get(projectPath);
+    if (!ext) return { running: false, port: null, url: null, logs: [] };
+    if (await isPortUp(ext.port)) {
+      return { running: true, port: ext.port, url: ext.url, logs: [] };
+    }
+    // The server we adopted went away — forget it (and un-allowlist its port)
+    // so the next Run starts a fresh one of our own.
+    adopted.delete(projectPath);
+    removeDetectedUrl(projectPath, `http://localhost:${ext.port}`);
     return { running: false, port: null, url: null, logs: [] };
   }
   if (await isPortUp(entry.port)) {

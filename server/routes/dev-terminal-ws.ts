@@ -8,7 +8,8 @@
  *   • server → client BINARY frames = raw PTY bytes (replay buffer first, then
  *     live output). Rendered directly by xterm.
  *   • server → client TEXT frames = JSON control:
- *       { type: "ready", port }   — attached to a running server
+ *       { type: "ready", port }   — attached to a shell we spawned
+ *       { type: "external", port }— a dev server we adopted (no shell to attach)
  *       { type: "inactive" }      — no dev server running for this project
  *       { type: "exit" }          — the dev server stopped
  *   • client → server BINARY frames = stdin (keystrokes, Ctrl-C, …) → PTY.
@@ -17,6 +18,7 @@
  */
 import type { ServerWebSocket } from "bun";
 import {
+  adoptedDevServerPort,
   attachDevTerminal,
   killDevServerPort,
   resizeDevTerminal,
@@ -39,7 +41,10 @@ export const devTerminalWebSocketHandler = {
       () => sendJson(ws, { type: "exit" }),
     );
     if (!handle) {
-      sendJson(ws, { type: "inactive" });
+      // Distinguish "nothing is running" from "it's running, but we didn't
+      // spawn it" — the latter has no PTY to attach, which isn't a failure.
+      const external = adoptedDevServerPort(projectPath);
+      sendJson(ws, external != null ? { type: "external", port: external } : { type: "inactive" });
       // Close so the client's reconnect timer fires — otherwise an open panel
       // would never pick up a dev server that starts later.
       ws.close();

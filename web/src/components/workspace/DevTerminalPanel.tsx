@@ -17,12 +17,18 @@ import "@xterm/xterm/css/xterm.css";
 
 interface Props {
   projectPath: string;
+  /** Whether the dev server is actually serving (port-based, polled by the
+   *  parent). The PTY connection below only says whether a *shell* is attached —
+   *  the shell survives a crashed or interrupted dev command, so it can't be the
+   *  source of truth for the "running" badge. */
+  running: boolean;
   onClose: () => void;
 }
 
-type Status = "connecting" | "running" | "inactive" | "exited";
+/** State of the PTY connection, not of the dev server. */
+type Status = "connecting" | "attached" | "external" | "inactive" | "exited";
 
-export function DevTerminalPanel({ projectPath, onClose }: Props) {
+export function DevTerminalPanel({ projectPath, running, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<Status>("connecting");
   const [port, setPort] = useState<number | null>(null);
@@ -120,10 +126,13 @@ export function DevTerminalPanel({ projectPath, onClose }: Props) {
             return;
           }
           if (msg.type === "ready") {
-            setStatus("running");
+            setStatus("attached");
             setPort(msg.port ?? null);
             term.clear(); // fresh start; the replay (binary) follows
             sendResize();
+          } else if (msg.type === "external") {
+            setStatus("external");
+            setPort(msg.port ?? null);
           } else if (msg.type === "inactive") {
             setStatus("inactive");
           } else if (msg.type === "exit") {
@@ -137,7 +146,7 @@ export function DevTerminalPanel({ projectPath, onClose }: Props) {
       ws.onclose = () => {
         if (disposed) return;
         // Reconnect so a (re)start of the dev server is picked up.
-        setStatus((s) => (s === "running" ? "exited" : s));
+        setStatus((s) => (s === "attached" ? "exited" : s));
         retry = setTimeout(connect, 2000);
       };
       ws.onerror = () => ws?.close();
@@ -169,14 +178,14 @@ export function DevTerminalPanel({ projectPath, onClose }: Props) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-1.5">
         <div className="flex items-center gap-2 text-[11px] text-foreground/65">
-          <StatusDot status={status} />
+          <StatusDot running={running} status={status} />
           <span className="font-medium uppercase tracking-wide text-foreground/55">
             Dev server
           </span>
           {port != null && (
             <span className="font-mono text-foreground/40">:{port}</span>
           )}
-          <span className="text-foreground/35">{statusLabel(status)}</span>
+          <span className="text-foreground/35">{statusLabel(running, status)}</span>
         </div>
         <button
           type="button"
@@ -192,13 +201,15 @@ export function DevTerminalPanel({ projectPath, onClose }: Props) {
       </div>
       <div className="relative min-h-0 flex-1 px-2 py-1.5">
         <div ref={containerRef} className="h-full w-full" />
-        {status !== "running" && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[11.5px] text-foreground/40">
-            {status === "inactive"
-              ? "Dev server isn't running — start it from the preview ▶"
-              : status === "exited"
-                ? "Dev server stopped"
-                : "Connecting…"}
+        {status !== "attached" && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-[11.5px] leading-relaxed text-foreground/40">
+            {status === "external"
+              ? "This dev server was started outside Clidable, so there's no terminal to attach. Stop it from the preview ■ to run it here instead."
+              : status === "inactive"
+                ? "Dev server isn't running — start it from the preview ▶"
+                : status === "exited"
+                  ? "Dev server stopped"
+                  : "Connecting…"}
           </div>
         )}
       </div>
@@ -206,25 +217,21 @@ export function DevTerminalPanel({ projectPath, onClose }: Props) {
   );
 }
 
-function statusLabel(status: Status): string {
-  switch (status) {
-    case "running":
-      return "running";
-    case "inactive":
-      return "not running";
-    case "exited":
-      return "stopped";
-    default:
-      return "connecting…";
-  }
+/** The badge reports the *server* (is the port serving?), not the shell — a
+ *  shell whose dev command died is still alive and would otherwise read
+ *  "running" over a blank preview. */
+function statusLabel(running: boolean, status: Status): string {
+  if (running) return status === "external" ? "running (external)" : "running";
+  if (status === "connecting") return "connecting…";
+  if (status === "attached") return "not running";
+  return status === "exited" ? "stopped" : "not running";
 }
 
-function StatusDot({ status }: { status: Status }) {
-  const color =
-    status === "running"
-      ? "bg-emerald-400/80"
-      : status === "exited"
-        ? "bg-rose-400/70"
-        : "bg-foreground/30";
+function StatusDot({ running, status }: { running: boolean; status: Status }) {
+  const color = running
+    ? "bg-emerald-400/80"
+    : status === "exited" || status === "attached"
+      ? "bg-rose-400/70"
+      : "bg-foreground/30";
   return <span aria-hidden className={`size-1.5 rounded-full ${color}`} />;
 }

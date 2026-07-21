@@ -422,6 +422,7 @@ export function SidePane({
         <BottomSheet>
           <DevTerminalPanel
             projectPath={projectPath}
+            running={devRunning}
             onClose={() => onTermOpenChange(false)}
           />
         </BottomSheet>
