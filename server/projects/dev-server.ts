@@ -63,8 +63,12 @@ const running = new Map<string, RunningDevServer>();
  * Next.js refuses outright ("Another next dev server is already running") no
  * matter which port we pass. No shell, so no terminal to attach; Stop still
  * works because stopping is port-based.
+ *
+ * `pids` is who was listening when we adopted. Keeping it lets the status check
+ * tell "still the server we adopted" from "that process died and something else
+ * took the port" — a port number alone can't.
  */
-const adopted = new Map<string, { port: number; url: string }>();
+const adopted = new Map<string, { port: number; url: string; pids: number[] }>();
 
 export interface DevServerStatus {
   running: boolean;
@@ -107,11 +111,13 @@ async function doStartDevServer(
   // even launch this?" guard below: something already serving the project is
   // previewable whether or not we'd know how to start it ourselves.
   const candidate = plan.fixedPort ?? plan.defaultPort;
-  const heldByProject = !alive && (await portOwnedByProject(candidate, projectPath));
+  const owners = alive ? [] : await projectOwnedPids(candidate, projectPath);
+  const heldByProject = owners.length > 0;
   if (heldByProject && (await isServingHttp(candidate))) {
     const url = plan.urlOverride ?? `http://localhost:${candidate}`;
-    adopted.set(projectPath, { port: candidate, url });
-    recordDetectedUrl(projectPath, `dev:${candidate}`, `http://localhost:${candidate}`, "spawn");
+    adopted.set(projectPath, { port: candidate, url, pids: owners });
+    // "process", not "spawn": we observed this server, we didn't start it.
+    recordDetectedUrl(projectPath, `dev:${candidate}`, `http://localhost:${candidate}`, "process");
     return { port: candidate, url };
   }
 
@@ -477,25 +483,42 @@ async function pidsOnPort(port: number): Promise<number[]> {
 }
 
 /**
- * Is whatever listens on `port` this project's own dev server? True when the
- * listener's working directory is the project (or a directory inside it, for a
- * monorepo package). That's the signal that lets us adopt an already-running
- * server instead of starting a rival one — and it's deliberately strict:
- * an unrelated app squatting the port fails the check and we scan on as before.
+ * Which processes listening on `port` are this project's own dev server —
+ * those whose working directory is the project (or a directory inside it, for a
+ * monorepo package). A non-empty result is what lets us adopt an already-running
+ * server instead of starting a rival one, and it's deliberately strict: an
+ * unrelated app squatting the port yields nothing and we scan on as before.
  *
- * POSIX only (`lsof` reports a process's cwd); on Windows this is always false,
+ * POSIX only (`lsof` reports a process's cwd); on Windows this is always empty,
  * so Windows keeps the old scan-to-the-next-free-port behaviour.
  */
-async function portOwnedByProject(port: number, projectPath: string): Promise<boolean> {
-  if (process.platform === "win32") return false;
+async function projectOwnedPids(port: number, projectPath: string): Promise<number[]> {
+  if (process.platform === "win32") return [];
+  // Cheap in-process TCP check first: on a free port — the common case for
+  // every project open — this returns false and saves spawning lsof at all.
+  if (!(await isPortUp(port))) return [];
   const pids = await pidsOnPort(port);
-  if (pids.length === 0) return false;
+  if (pids.length === 0) return [];
   // Compare resolved paths: a process's cwd is always fully resolved, while the
   // project path can be reached through a symlink (on macOS every path under
   // /tmp or /var already is one), and a raw string compare would miss the match.
   const root = await realpath(projectPath).catch(() => projectPath);
   const cwds = await Promise.all(pids.map(processCwd));
-  return cwds.some((cwd) => cwd != null && (cwd === root || cwd.startsWith(`${root}/`)));
+  return pids.filter((_, i) => {
+    const cwd = cwds[i];
+    return cwd != null && (cwd === root || cwd.startsWith(`${root}/`));
+  });
+}
+
+/** Is this pid still around? EPERM means it exists but belongs to someone else,
+ *  which still counts as alive. */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 /**
@@ -576,7 +599,14 @@ export async function devServerStatus(
   if (!entry || entry.exited) {
     const ext = adopted.get(projectPath);
     if (!ext) return { running: false, port: null, url: null, logs: [] };
-    if (await isPortUp(ext.port)) {
+    // An adopted server has to clear the same bar it was adopted on, not just
+    // "something accepts TCP here". A wedged dev server keeps its listening
+    // socket open forever, and reporting that as running is precisely the
+    // blank-preview-under-a-green-badge bug adoption exists to avoid — the UI
+    // polls this and skips auto-run whenever it says running, so nothing would
+    // ever recover. The pid check catches the other half: the process we
+    // adopted died and something unrelated now holds its port.
+    if (ext.pids.some(pidAlive) && (await isServingHttp(ext.port))) {
       return { running: true, port: ext.port, url: ext.url, logs: [] };
     }
     // The server we adopted went away — forget it (and un-allowlist its port)
