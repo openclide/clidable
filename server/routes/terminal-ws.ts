@@ -24,6 +24,10 @@ import {
   type TerminalServerMessage,
 } from "../../shared/types";
 
+/** The `open` control message, kept so a stale-resume relaunch can replay the
+ *  exact spawn the client asked for. */
+type TerminalOpenMessage = Extract<TerminalClientMessage, { type: "open" }>;
+
 interface TerminalSocketData {
   /** Map of session-id → subscriber registered for THIS socket. */
   subs: Map<string, SessionSubscriber>;
@@ -31,6 +35,10 @@ interface TerminalSocketData {
    *  for ids with no live session yet, so retention can be re-applied after
    *  `open` finishes spawning (retain can race an in-flight spawn). */
   retained: Set<string>;
+  /** Ids already relaunched once after a stale resume. A fresh spawn carries no
+   *  resume args and so can't fail the same way — but if clearing the ref ever
+   *  fails (its write is best-effort), this is what stops a respawn loop. */
+  resumeRetried: Set<string>;
 }
 
 // Every open terminal socket, so a status change can be fanned out to whichever
@@ -57,6 +65,7 @@ export const terminalWebSocketHandler = {
     ws.data = {
       subs: new Map(),
       retained: new Set(),
+      resumeRetried: new Set(),
     };
     terminalSockets.add(ws);
   },
@@ -129,7 +138,7 @@ async function handleControl(
       // session (detachedAt stays null) so the reaper could never collect
       // it — bail and let the fresh session sit detached instead.
       if (ws.readyState !== 1 /* OPEN */) return;
-      attachSubscriber(ws, session);
+      attachSubscriber(ws, session, msg);
       // A `retain` for this id may have arrived while the spawn was still
       // in flight (no session to pin yet) — apply it now.
       if (ws.data.retained.has(session.id)) session.retain(ws);
@@ -218,6 +227,7 @@ async function handleControl(
 function attachSubscriber(
   ws: ServerWebSocket<TerminalSocketData>,
   session: Session,
+  open: TerminalOpenMessage,
 ): void {
   // If this socket already subscribed to this session, drop the old sub.
   const prior = ws.data.subs.get(session.id);
@@ -225,11 +235,64 @@ function attachSubscriber(
 
   const sub: SessionSubscriber = {
     onOutput: (chunk) => sendOutputFrame(ws, session.id, chunk),
-    onExit: (code, signal) =>
-      sendServer(ws, { type: "exit", id: session.id, code, signal }),
+    onExit: (code, signal) => {
+      // A resume against a stale ref isn't the agent quitting — it's a session
+      // that never existed (the id was minted at SessionStart, before the agent
+      // had written any conversation). Relaunch clean instead of reporting an
+      // exit, which would strand the pane on "close this tab to free it".
+      if (session.didResumeFailFast() && !ws.data.resumeRetried.has(session.id)) {
+        ws.data.resumeRetried.add(session.id);
+        void respawnFresh(ws, open, code, signal);
+        return;
+      }
+      sendServer(ws, { type: "exit", id: session.id, code, signal });
+    },
   };
   session.subscribe(sub);
   ws.data.subs.set(session.id, sub);
+}
+
+/**
+ * Re-open a terminal whose resume turned out to be stale. The failed attempt
+ * already cleared the session ref, so this spawns the agent fresh under the
+ * same terminal id — the pane keeps its identity and the new output simply
+ * continues below the failure, which stays visible in the scrollback.
+ *
+ * The retry is one-shot while it's in flight — the guard in attachSubscriber,
+ * plus the fact that a fresh spawn carries no resume args to fail at. It is
+ * released again on success so a *later* stale resume for the same id (history
+ * deleted, id rotated by /clear) can still recover on this same long-lived
+ * socket.
+ */
+async function respawnFresh(
+  ws: ServerWebSocket<TerminalSocketData>,
+  open: TerminalOpenMessage,
+  code: number,
+  signal: string | null,
+): Promise<void> {
+  try {
+    // Drop the dead session's subscriber first: attachSubscriber assumes the
+    // `prior` it finds belongs to the session it was handed, which stops being
+    // true the moment a different Session takes over this id.
+    ws.data.subs.delete(open.id);
+    const session = await sessionManager.open({
+      id: open.id,
+      agent: open.agent,
+      projectPath: open.projectPath,
+      cols: open.cols,
+      rows: open.rows,
+    });
+    if (ws.readyState !== 1 /* OPEN */) return;
+    attachSubscriber(ws, session, open);
+    if (ws.data.retained.has(session.id)) session.retain(ws);
+    ws.data.resumeRetried.delete(open.id);
+  } catch (err) {
+    // Nothing left to fall back to. Report the exit the client would have got
+    // had we not swallowed it, so its normal session-ended handling runs
+    // instead of leaving the pane waiting on output that will never come.
+    console.error(`[terminal-ws] respawn after stale resume failed:`, err);
+    sendServer(ws, { type: "exit", id: open.id, code, signal });
+  }
 }
 
 function handleBinaryFrame(

@@ -66,6 +66,13 @@ export class Session {
   private retainers = new Set<unknown>();
   private ring: RingBuffer = { chunks: [], bytes: 0 };
   private exited = false;
+  /** We asked this process to die (close / reap / shutdown), as opposed to it
+   *  dying on its own. Without this, a kill within the fail-fast window is
+   *  indistinguishable from a resume against a session that never existed. */
+  private killed = false;
+  /** Set on exit when this was a resume attempt that died fast — i.e. the
+   *  stored session ref was stale (the agent had no such conversation). */
+  private resumeFailedFast = false;
   private exitCode: number | null = null;
   private exitSignal: string | null = null;
   // Project UUID this session belongs to (null → not persisted). Drives the
@@ -179,23 +186,32 @@ export class Session {
     this.exited = true;
     this.exitCode = code;
     this.exitSignal = signal;
-    for (const s of this.subscribers) s.onExit(code, signal);
-    clearTerminal(this.id); // free the detector's rolling buffer
-    // Keep the record but mark it dormant — the process is gone, yet the agent
-    // can be resumed later (claude --resume …). An explicit user close deletes
-    // the record first (manager.kill), so this UPDATE simply no-ops there.
+    // A resume that died almost immediately means the ref was stale. A SIGTERM
+    // *we* sent looks identical by timing, so `killed` is what separates them —
+    // without it, closing a just-resumed terminal in one window would read as a
+    // failed resume in every other window still subscribed to it, and they'd
+    // each respawn the session the user just closed.
+    this.resumeFailedFast =
+      this.argsOverride !== null &&
+      !this.killed &&
+      Date.now() - this.spawnedAt < RESUME_FAILFAST_MS;
+    // Settle the durable record BEFORE notifying anyone. A subscriber reacts to
+    // this exit by re-opening the id, and that spawn must not be able to read a
+    // ref we are about to clear — today it can't only because `open` defers the
+    // read behind an awaited stat(), which isn't a guarantee worth resting on.
     if (this.projectUuid) {
       try {
+        // Keep the record but mark it dormant — the process is gone, yet the
+        // agent can be resumed later (claude --resume …). An explicit user
+        // close deletes the record first (manager.kill), so this no-ops there.
         markDormant(this.id, true);
-        // A resume that died almost immediately means the ref was stale —
-        // forget it so the next open spawns fresh instead of re-failing.
-        if (this.argsOverride && Date.now() - this.spawnedAt < RESUME_FAILFAST_MS) {
-          setAgentRef(this.id, null);
-        }
+        if (this.resumeFailedFast) setAgentRef(this.id, null);
       } catch {
         // non-critical
       }
     }
+    for (const s of this.subscribers) s.onExit(code, signal);
+    clearTerminal(this.id); // free the detector's rolling buffer
     clearAgentStatus(this.id); // no live status once the process is gone
     setSessionLabel(this.id, null); // drop any tray name too
     this.terminal?.close();
@@ -297,11 +313,19 @@ export class Session {
   /** Send SIGTERM and let the exit handler clean up. */
   kill(): void {
     if (this.exited) return;
+    this.killed = true; // this exit is ours, not the agent failing
     this.proc?.kill();
   }
 
   isExited(): boolean {
     return this.exited;
+  }
+
+  /** True once this session has exited AND it was a resume whose ref turned out
+   *  to be stale. The ref has already been cleared, so re-opening this id
+   *  spawns a fresh agent rather than re-failing. */
+  didResumeFailFast(): boolean {
+    return this.resumeFailedFast;
   }
 
   /** OS pid of the spawned agent process, or null once exited. Used by the
