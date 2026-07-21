@@ -196,6 +196,31 @@ fn focus_main(app: &AppHandle) {
     }
 }
 
+/// Frontend command: open a URL in the user's default browser.
+///
+/// `window.open` can't do this from the webview — WKWebView asks a navigation
+/// delegate Tauri doesn't install, so the call silently no-ops. Handing the URL
+/// to the OS is the shell's job.
+///
+/// Only http/https are forwarded. The preview address bar is user-typed, but a
+/// dev server can also redirect it, and `open`ing an arbitrary scheme is how a
+/// URL turns into "run this" (file://, and every app-registered handler on the
+/// machine). Anything else is refused rather than passed through.
+#[tauri::command]
+fn open_external(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    // A prefix test is enough to decide this: a string starting with `http://`
+    // IS an http URL to whatever the OS hands it to. Deliberately strict —
+    // leading whitespace or any other scheme is refused, not normalised.
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err("refusing to open a non-http(s) URL".into());
+    }
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Reveal + focus the window whose webview invoked this. Tauri injects the
 /// caller's window, so the frontend calls it with no args. The tray's
 /// "open agent" flow uses it to bring forward the window owning that agent —
@@ -611,9 +636,11 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             capture::capture_webview,
             open_workspace_window,
+            open_external,
             reveal_window
         ])
         .setup(|app| {

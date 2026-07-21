@@ -3,7 +3,7 @@ import type { Project } from "../welcome/data";
 import { WORKSPACE_TOOLS, type WorkspaceTool } from "./WorkspaceTools";
 import { AddProjectMenu } from "./AddProjectMenu";
 import { PositionedPortal } from "../ui/PositionedPortal";
-import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
+import { ProjectBadge, shouldTintProjects } from "./ProjectBadge";
 
 interface Props {
   openProjects: Project[];
@@ -39,8 +39,7 @@ export function MobileChrome({
 
   const active = openProjects.find((p) => p.id === activeProjectId) ?? openProjects[0];
   const canClose = openProjects.length > 1;
-  const dups = duplicatedInitials(openProjects.map((p) => p.name));
-  const tinted = (name: string) => dups.has(name.charAt(0).toUpperCase());
+  const tinted = shouldTintProjects(openProjects.map((p) => p.name));
 
   return (
     <header
@@ -132,7 +131,7 @@ export function MobileChrome({
               }}
               className="flex min-w-0 flex-1 items-center gap-2 text-left"
             >
-              <ProjectBadge name={p.name} tinted={tinted(p.name)} />
+              <ProjectBadge name={p.name} tinted={tinted} />
               <span className="min-w-0 flex-1 truncate text-[13px] text-foreground/85">
                 {p.name}
               </span>

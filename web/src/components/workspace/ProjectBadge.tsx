@@ -7,26 +7,23 @@ function projectHue(seed: string): number {
   return h % 360;
 }
 
-/** The uppercased first letters that occur 2+ times among `names` — i.e. the
- *  initials that need color to tell their projects apart. Callers tint a badge
- *  only when its initial is in this set; everything else stays neutral gray. */
-export function duplicatedInitials(names: readonly string[]): Set<string> {
-  const counts = new Map<string, number>();
-  for (const n of names) {
-    const k = n.charAt(0).toUpperCase();
-    if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
-  }
-  const dups = new Set<string>();
-  for (const [k, c] of counts) if (c > 1) dups.add(k);
-  return dups;
+/** Should project badges be tinted? Colour is what makes them scannable, so it
+ *  applies as soon as there is more than one project open — a lone project has
+ *  nothing to be told apart from and stays neutral gray.
+ *
+ *  It's a property of the open set, not of any one badge: every surface (tabs,
+ *  dock, address bar, terminal chips, composer, mobile) asks this once and
+ *  passes the answer to each `ProjectBadge`. */
+export function shouldTintProjects(names: readonly string[]): boolean {
+  return names.length > 1;
 }
 
 /** Square first-letter badge for a project. Shared by the project tabs, the
  *  preview URL bar, terminal tab chips, the composer label, and the mobile
  *  switcher. `size` (px) scales the box, font and radius together (20px
  *  default). `tinted` paints it with a per-project color (derived from `name`,
- *  consistent across surfaces) — used only when the initial collides with
- *  another open project; otherwise it stays neutral gray. */
+ *  consistent across surfaces) — used whenever more than one project is open
+ *  (see `shouldTintProjects`); a lone project stays neutral gray. */
 export function ProjectBadge({
   name,
   size = 20,

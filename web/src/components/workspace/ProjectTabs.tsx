@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Project } from "../welcome/data";
-import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
+import { ProjectBadge, shouldTintProjects } from "./ProjectBadge";
 
 interface Props {
   projects: Project[];
@@ -31,7 +31,7 @@ export function ProjectTabs({
   // Badges (and color, where initials collide) only earn their space once a
   // second project is open.
   const multi = projects.length > 1;
-  const dups = duplicatedInitials(projects.map((p) => p.name));
+  const tinted = shouldTintProjects(projects.map((p) => p.name));
 
   // Fade the edge(s) that have scrolled-away tabs, so overflow reads as
   // "more over there" rather than a hard cut.
@@ -101,7 +101,7 @@ export function ProjectTabs({
                 <ProjectBadge
                   name={p.name}
                   size={15}
-                  tinted={dups.has(p.name.charAt(0).toUpperCase())}
+                  tinted={tinted}
                 />
               )}
               <span className="font-medium tracking-tight">{p.name}</span>

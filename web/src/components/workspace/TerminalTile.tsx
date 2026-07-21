@@ -14,7 +14,7 @@ import {
 } from "../welcome/data";
 import { PositionedPortal } from "../ui/PositionedPortal";
 import { POPOVER_GLASS_STYLE, usePopoverDismiss } from "../ui/popover";
-import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
+import { ProjectBadge, shouldTintProjects } from "./ProjectBadge";
 import {
   clearTerminalDrag,
   currentTerminalDrag,
@@ -112,9 +112,7 @@ export function TerminalTile({
   // when there's more than one project to tell apart. Color is added only
   // where initials collide — unique initials stay neutral gray.
   const multiProject = openProjects.length > 1;
-  const dupInitials = duplicatedInitials(openProjects.map((p) => p.name));
-  const isTinted = (name: string) =>
-    dupInitials.has(name.charAt(0).toUpperCase());
+  const isTinted = shouldTintProjects(openProjects.map((p) => p.name));
 
   return (
     <div
@@ -168,7 +166,7 @@ export function TerminalTile({
                 key={t ? t.instanceId : `empty-${i}`}
                 tab={t}
                 projectName={tabProject}
-                projectTinted={tabProject ? isTinted(tabProject) : false}
+                projectTinted={isTinted}
                 active={i === activeIndex}
                 showClose={showCloseOnTab}
                 onSelect={() => onSelectTab(i)}
@@ -231,7 +229,7 @@ export function TerminalTile({
               // Surface the project on the composer only when more than one is
               // open — otherwise it's redundant.
               projectName={multiProject ? activeProject.name : undefined}
-              projectTinted={multiProject && isTinted(activeProject.name)}
+              projectTinted={isTinted}
               compact={compact}
               plain={activeTab.agentId === "terminal"}
               onSelectAgent={(nextAgentId) => {
@@ -1034,8 +1032,7 @@ function ProjectChip({
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const multi = openProjects.length > 1;
-  const dups = duplicatedInitials(openProjects.map((p) => p.name));
-  const tinted = (name: string) => dups.has(name.charAt(0).toUpperCase());
+  const tinted = shouldTintProjects(openProjects.map((p) => p.name));
 
   // If the project count drops to one while the menu is open, close it — the
   // now-`disabled` button can't toggle it shut, which would otherwise strand
@@ -1064,7 +1061,7 @@ function ProjectChip({
           }
         `}
       >
-        <ProjectBadge name={selected.name} tinted={tinted(selected.name)} />
+        <ProjectBadge name={selected.name} tinted={tinted} />
         <span className="max-w-[170px] truncate">{selected.name}</span>
         {multi && (
           <svg
@@ -1111,7 +1108,7 @@ function ProjectChip({
               focus:outline-none focus-visible:bg-white/[0.06]
             "
           >
-            <ProjectBadge name={p.name} tinted={tinted(p.name)} />
+            <ProjectBadge name={p.name} tinted={tinted} />
             <span className="min-w-0 flex-1 truncate text-[12px] text-foreground/85">
               {p.name}
             </span>

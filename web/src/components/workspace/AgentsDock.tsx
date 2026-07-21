@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AgentStatusIcon } from "./AgentStatusIcon";
 import { getAgent, shortAgentName, type Project } from "../welcome/data";
-import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
+import { ProjectBadge, shouldTintProjects } from "./ProjectBadge";
 import {
   hasTerminalDrag,
   isLeavingTarget,
@@ -52,7 +52,7 @@ export function AgentsDock({
   onDropTerminal,
 }: Props) {
   const [dropHover, setDropHover] = useState(false);
-  const dupInitials = duplicatedInitials(openProjects.map((p) => p.name));
+  const tinted = shouldTintProjects(openProjects.map((p) => p.name));
 
   return (
     <div
@@ -110,7 +110,7 @@ export function AgentsDock({
             <ProjectBadge
               name={projectName}
               size={15}
-              tinted={dupInitials.has(projectName.charAt(0).toUpperCase())}
+              tinted={tinted}
             />
             <AgentStatusIcon
               instanceId={t.instanceId}

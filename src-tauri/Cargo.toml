@@ -22,6 +22,9 @@ tauri-build = { version = "2.6", features = [] }
 [dependencies]
 tauri = { version = "2.11", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-shell = "2.3"
+# Hand a preview URL to the user's default browser. `window.open` can't do it
+# from the webview, and shell's `open` is deprecated in favour of this.
+tauri-plugin-opener = "2.5"
 # Single-instance: forward a CLI launch (`clidable open <dir>`) into the running
 # app so it opens a window for that directory instead of booting a second app.
 tauri-plugin-single-instance = "2.4"

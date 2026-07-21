@@ -16,8 +16,9 @@
 import { useEffect, useRef, useState } from "react";
 import { PositionedPortal } from "../ui/PositionedPortal";
 import { TerminalGlyph } from "./TerminalGlyph";
-import { ProjectBadge, duplicatedInitials } from "./ProjectBadge";
-import { normalizeUrl, probeUrl } from "../../lib/preview-url";
+import { ProjectBadge, shouldTintProjects } from "./ProjectBadge";
+import { openExternal } from "../../lib/open-external";
+import { normalizeUrl, probeUrl, resolvePreviewUrl } from "../../lib/preview-url";
 
 interface PortPreset {
   port: number;
@@ -125,7 +126,7 @@ export function PreviewAddressBar({
   const detected = dedupeDetected(detectedUrls);
   const hasApps = projects.length > 1;
   const currentApp = projects.find((p) => p.id === activeProjectId);
-  const dups = duplicatedInitials(projects.map((p) => p.name));
+  const tinted = shouldTintProjects(projects.map((p) => p.name));
 
   const selectApp = (id: string) => {
     setMenuOpen(false);
@@ -182,7 +183,7 @@ export function PreviewAddressBar({
             <ProjectBadge
               name={currentApp.name}
               size={16}
-              tinted={dups.has(currentApp.name.charAt(0).toUpperCase())}
+              tinted={tinted}
             />
           )}
           <svg viewBox="0 0 24 24" width={10} height={10} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" className={`transition-transform duration-150 ${menuOpen ? "rotate-180" : ""}`}>
@@ -191,9 +192,10 @@ export function PreviewAddressBar({
         </button>
 
         <CapsuleButton
-          onClick={() => {
-            if (url) window.open(url, "_blank", "noopener");
-          }}
+          // The *resolved* URL, same as the iframe loads. `url` is the raw
+          // address, so on a remote Clidable host it reads http://localhost:3000
+          // — which points at the user's own machine, not the dev server.
+          onClick={() => void openExternal(resolvePreviewUrl(url))}
           disabled={!url}
           title="Open in system browser"
           label="Open in system browser"
@@ -236,7 +238,7 @@ export function PreviewAddressBar({
                   <ProjectBadge
                     name={p.name}
                     size={16}
-                    tinted={dups.has(p.name.charAt(0).toUpperCase())}
+                    tinted={tinted}
                   />
                   <span className="truncate">{p.name}</span>
                 </span>
