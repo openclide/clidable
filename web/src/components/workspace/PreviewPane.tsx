@@ -79,7 +79,6 @@ export function PreviewPane({
           className="
             mx-auto flex h-full flex-col overflow-hidden
             transition-[max-width] duration-300 ease-[cubic-bezier(0.2,0.7,0.2,1)]
-            bg-white
           "
           style={{ maxWidth: WIDTHS[viewport], width: "100%" }}
         >
@@ -89,7 +88,20 @@ export function PreviewPane({
                 key={`${url}#${nonce}`}
                 src={url}
                 title="Preview"
-                className="h-full w-full border-0 bg-white"
+                // No background here, deliberately — do not add `bg-white`.
+                // A backdrop only shows through when the embedded document
+                // paints no canvas of its own, and the two kinds of content
+                // that do that want opposite colours: a browser-*generated*
+                // view (plain text, directory listing, error page) takes its
+                // text colour from the system appearance — white on a dark Mac
+                // — while an HTML page that declares no background has black
+                // text. `color-scheme` here can't settle it; it does not
+                // propagate into the embedded document. Falling onto the app's
+                // dark pane fixes the generated views, which is the case that
+                // actually shows up (every API-style dev server answers `/`
+                // with text or JSON). Accepted trade-off: a background-less
+                // HTML page renders dark-on-dark.
+                className="h-full w-full border-0"
                 // Minimum grants for a dev preview: scripts, same-origin
                 // (cookies/storage), forms, popups for "open in new tab".
                 // OMITS `allow-top-navigation*` on purpose — see file header.
