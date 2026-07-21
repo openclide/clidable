@@ -75,11 +75,12 @@ function quoteForShell(path: string): string {
  * inherited state). `powershell` (5.1) rather than `pwsh` (7) because only the
  * former is guaranteed present.
  *
- * Known cost, accepted: Windows pays a whole powershell.exe start (~200-400ms
- * even with -NoProfile) per event, and PreToolUse fires on every tool call —
- * versus ~5ms for `sh`. Trimming the Windows event set would cut it, at the
- * price of coarser status; a compiled reporter would fix it properly. Revisit
- * once there's a Windows build to measure on rather than guess at.
+ * Known cost, accepted: Windows pays a whole powershell.exe start per event.
+ * Measured end-to-end in a Windows 11 VM (PS 5.1, ARM64): 251-350ms per hook
+ * invocation, versus ~5ms for `sh`. PreToolUse fires on every tool call, so a
+ * 100-call session spends ~30s of wall-clock in hook startup. Trimming the
+ * Windows event set would cut it, at the price of coarser status; a compiled
+ * reporter would fix it properly.
  */
 export function hookCommand(scriptPath: string, state: string): string {
   const interpreter = IS_WINDOWS
@@ -110,19 +111,38 @@ function writeScript(path: string, contents: string): void {
 
 /**
  * Read stdin into `$stdin`, capped at 3s. The POSIX scripts get this from
- * `timeout 3 cat`; PowerShell has no such wrapper, so we await the async read
- * with a budget and fall through to an empty payload.
+ * `timeout 3 cat`; PowerShell has no such wrapper, so we build the equivalent.
  *
- * The cap is the point: `[Console]::In.ReadToEnd()` on a stdin nobody redirected
- * blocks until EOF that never comes, which hangs whichever agent invoked the
- * hook — for agents that run hooks synchronously in their loop, on every event.
+ * The cap is the point: a hook invoked without a redirected stdin would
+ * otherwise block on EOF that never comes, hanging whichever agent called it —
+ * for agents that run hooks synchronously in their loop, on every event.
+ *
+ * Both lines below are load-bearing, and MEASURED on Windows 11 / PS 5.1
+ * (5.1.26100.7019, ARM64) — the obvious
+ * `[Console]::In.ReadToEndAsync().Wait(3000)` does NOT work:
+ *
+ *   • `[Console]::In` is a *SyncTextReader*, which overrides the async methods
+ *     to run synchronously. `ReadToEndAsync()` therefore blocks BEFORE it ever
+ *     returns a Task, so `.Wait(3000)` never gets to time anything out — a VM
+ *     probe of that version sat at 15.0s (harness kill), not 3s. Opening a
+ *     fresh StreamReader over the raw stdin stream gets a genuinely async
+ *     ReadToEndAsync, so the budget is real: with the pipe held open, measured
+ *     3.31s.
+ *   • `IsInputRedirected` short-circuits the no-pipe case entirely rather than
+ *     waiting out the budget for a read that can never produce anything:
+ *     measured 0.32s, and the report still goes out with `raw` = {}.
  */
 const PS_READ_STDIN = [
   '$stdin = ""',
-  "try {",
-  "  $read = [Console]::In.ReadToEndAsync()",
-  "  if ($read.Wait(3000)) { $stdin = $read.Result }",
-  "} catch { }",
+  "if ([Console]::IsInputRedirected) {",
+  "  $reader = $null",
+  "  try {",
+  "    $reader = New-Object System.IO.StreamReader([Console]::OpenStandardInput())",
+  "    $read = $reader.ReadToEndAsync()",
+  "    if ($read.Wait(3000)) { $stdin = $read.Result }",
+  "  } catch { }",
+  "  finally { if ($null -ne $reader) { $reader.Dispose() } }",
+  "}",
 ];
 
 /** The lifecycle-reporting hook, in whichever language this platform can run. */
