@@ -19,21 +19,29 @@ interface Props {
   onPick: (path: string) => void;
   /** True while the caller is opening the chosen folder (disables actions). */
   busy?: boolean;
+  /**
+   * Directory to open at. Use it when the caller already shows a path the user
+   * is about to change — reopening somewhere else makes them navigate back to
+   * where they already were. Omitted → the server's default (the launch dir,
+   * falling back to home).
+   */
+  initialPath?: string | null;
 }
 
-export function FolderPickerModal({ open, onClose, onPick, busy }: Props) {
+export function FolderPickerModal({ open, onClose, onPick, busy, initialPath }: Props) {
   const [view, setView] = useState<FsBrowseResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // (Re)load from home each time the modal opens.
+  // (Re)load each time the modal opens: at the caller's current path when it
+  // has one, else the server default.
   useEffect(() => {
     if (!open) {
       setView(null);
       setError(null);
       return;
     }
-    void navigate(undefined);
+    void navigate(initialPath ?? undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 

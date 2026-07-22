@@ -196,6 +196,24 @@ export async function fsListHandler(req: Request): Promise<Response> {
 }
 
 /**
+ * The directory Clidable was launched from, when it's a usable default for
+ * "where should a new project go".
+ *
+ * Null at the filesystem root: a Finder/Dock-launched desktop app inherits cwd
+ * "/", and offering that would be worse than falling back to home. Also null if
+ * it no longer resolves — a long-lived background server outlives the shell it
+ * was started in, and that directory can be deleted or renamed underneath it.
+ */
+async function launchDir(): Promise<string | null> {
+  try {
+    const abs = await realpath(process.cwd());
+    return abs === "/" ? null : abs;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * GET /api/fs/browse?path=<abs> — list sub-directories for the folder picker.
  *
  * Unlike fsList this is NOT sandboxed to a project root: its whole job is to
@@ -210,7 +228,13 @@ export async function fsBrowseHandler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const raw = url.searchParams.get("path");
   const home = homedir();
-  const target = raw && raw.length > 0 ? resolve(raw) : home;
+  // Resolved once: it is both the default location and a field in the reply,
+  // and two calls could disagree if the cwd were renamed mid-request.
+  const cwd = await launchDir();
+  // No explicit path → start where Clidable was launched from, so every picker
+  // opens next to what you were working on. Home remains the fallback, and the
+  // "⌂ Home" button navigates to `home` explicitly, so it still works.
+  const target = raw && raw.length > 0 ? resolve(raw) : (cwd ?? home);
 
   let abs: string;
   try {
@@ -248,6 +272,7 @@ export async function fsBrowseHandler(req: Request): Promise<Response> {
     path: abs,
     parent: parent === abs ? null : parent, // null at filesystem root
     home,
+    cwd,
     dirs,
   };
   return Response.json(body);

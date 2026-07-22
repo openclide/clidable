@@ -27,7 +27,10 @@ export function NewProjectModal({ agentId, onClose, onCreated }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Default the location to the server's home dir when the modal opens.
+  // Default the location to wherever Clidable was launched from, so a new
+  // project lands next to what you were already working on. Falls back to home
+  // when there's no usable launch dir — notably a Finder/Dock-launched desktop
+  // app, whose cwd is "/".
   useEffect(() => {
     if (!agentId) {
       setName("");
@@ -37,7 +40,7 @@ export function NewProjectModal({ agentId, onClose, onCreated }: Props) {
       return;
     }
     browseDir()
-      .then((v) => setParentDir((cur) => cur ?? v.home))
+      .then((v) => setParentDir((cur) => cur ?? v.cwd ?? v.home))
       .catch(() => {/* leave null; user picks manually */});
   }, [agentId]);
 
@@ -188,6 +191,7 @@ export function NewProjectModal({ agentId, onClose, onCreated }: Props) {
 
       <FolderPickerModal
         open={pickerOpen}
+        initialPath={parentDir}
         onClose={() => setPickerOpen(false)}
         onPick={(path) => {
           setParentDir(path);
