@@ -1,11 +1,30 @@
-/** A stable hue (0–359) derived from a project's name. Same name → same
- *  color; different names → different colors, so tinted same-initial projects
- *  stay distinguishable. */
+/**
+ * A stable hue (0–359) derived from a project's name. Same name → same color;
+ * different names → *visibly* different colors, which is the whole point for
+ * same-initial projects.
+ *
+ * FNV-1a plus murmur3's finalizer. The finalizer is not optional decoration:
+ * the previous `h * 31 + c` had no avalanche, so a one-character difference
+ * moved the hash by one and `% 360` turned that into a ONE DEGREE hue shift —
+ * "expo-1" (118°) and "expo-2" (119°) rendered as the same green. Mixing the
+ * high bits down makes a single-character change scatter across the wheel.
+ */
 function projectHue(seed: string): number {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return h % 360;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) % 360;
 }
+
+/** Exported for the regression test that pins neighbouring names apart. */
+export const __projectHue = projectHue;
 
 /** Should project badges be tinted? Colour is what makes them scannable, so it
  *  applies as soon as there is more than one project open — a lone project has
