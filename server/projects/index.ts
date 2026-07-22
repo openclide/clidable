@@ -13,6 +13,7 @@
  * checkpoints/project.ts) so it survives rename/move — the table's `path`
  * is just the last-known location, refreshed on each open.
  */
+import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 import { openDb } from "../db";
@@ -43,6 +44,17 @@ function rowToProject(r: ProjectRow): Project {
   };
 }
 
+/**
+ * All registered projects, most-recently-opened first — minus any whose folder
+ * is no longer on disk.
+ *
+ * Deleting a project folder outside Clidable used to leave a permanent phantom
+ * in every picker, with no way to clear it but the explicit Remove action. The
+ * row is deliberately KEPT rather than pruned: a path can be absent because an
+ * external drive or network share is unmounted, and silently destroying the
+ * user's project history for that would be far worse than hiding it. Remount
+ * and it comes back.
+ */
 export function listProjects(): Project[] {
   const db = openDb();
   const rows = db
@@ -50,7 +62,7 @@ export function listProjects(): Project[] {
       `SELECT ${SELECT_COLS} FROM projects ORDER BY last_opened DESC`,
     )
     .all();
-  return rows.map(rowToProject);
+  return rows.map(rowToProject).filter((p) => existsSync(p.path));
 }
 
 export function getProject(id: string, db: Database = openDb()): Project | null {
