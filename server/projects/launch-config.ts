@@ -31,6 +31,19 @@ export type PortInjection = "flag" | "env";
 interface FrameworkLaunch {
   defaultPort: number;
   inject: PortInjection;
+  /**
+   * Script names to prefer over the default dev → start → serve order.
+   * Needed when a framework ships one dev server PER PLATFORM: Expo's `start`
+   * is the native Metro TUI (QR code, device menu) with no web page to preview,
+   * while `web` is the browser dev server.
+   */
+  scripts?: readonly string[];
+  /**
+   * Omit the `--host 127.0.0.1` flag. Some CLIs take a MODE there rather than
+   * an address — Expo's `--host` is lan|tunnel|localhost and exits 1 on an IP
+   * (measured). Expo binds all interfaces anyway, so loopback still reaches it.
+   */
+  noHostFlag?: boolean;
 }
 
 /** Port convention + injection style per framework. Absent = no known web dev
@@ -44,6 +57,11 @@ const FRAMEWORK_LAUNCH: Partial<Record<ProjectFramework, FrameworkLaunch>> = {
   remix: { defaultPort: 3000, inject: "env" },
   hono: { defaultPort: 3000, inject: "env" },
   node: { defaultPort: 3000, inject: "env" },
+  // Expo's own `--help` claims `--port` "does not apply to web". It does:
+  // `expo start --web --port 8099` serves on 8099 (measured). That matters —
+  // without an injectable port every Expo project would want 8081, and the
+  // second one opened in a workspace would report the FIRST one's URL.
+  expo: { defaultPort: 8081, inject: "flag", scripts: ["web"], noHostFlag: true },
 };
 
 /* --- config file I/O (coerced both ways so the file is always well-formed) --- */
@@ -109,15 +127,19 @@ export async function detectPackageManager(projectPath: string): Promise<Package
   return "bun";
 }
 
-/** The dev script to run, preferring `dev` → `start` → `serve`. Null when the
- *  project has no package.json scripts (or none of those names). */
-export async function detectScript(projectPath: string): Promise<string | null> {
+/** The dev script to run. `prefer` (a framework's own ordering) wins, then the
+ *  generic `dev` → `start` → `serve`. Null when the project has no package.json
+ *  scripts, or none of the candidate names. */
+export async function detectScript(
+  projectPath: string,
+  prefer: readonly string[] = [],
+): Promise<string | null> {
   const pkg = await readJson<{ scripts?: Record<string, unknown> }>(
     join(projectPath, "package.json"),
   );
   const scripts = pkg?.scripts;
   if (!scripts || typeof scripts !== "object") return null;
-  for (const name of ["dev", "start", "serve"]) {
+  for (const name of [...prefer, "dev", "start", "serve"]) {
     if (typeof (scripts as Record<string, unknown>)[name] === "string") return name;
   }
   return null;
@@ -134,10 +156,11 @@ export function buildCommand(
   script: string,
   inject: PortInjection,
   port: number,
+  noHostFlag = false,
 ): string {
   const runner = pm === "bun" ? "bun run" : pm === "npm" ? "npm run" : pm; // pnpm/yarn: `pnpm dev`
   if (inject === "flag") {
-    const flags = `--port ${port} --host 127.0.0.1`;
+    const flags = noHostFlag ? `--port ${port}` : `--port ${port} --host 127.0.0.1`;
     const sep = pm === "npm" ? " -- " : " ";
     return `${runner} ${script}${sep}${flags}`;
   }
@@ -155,13 +178,13 @@ export async function detectLaunchPlan(
   // No framework plan → nothing to probe for; skip the filesystem entirely.
   if (!fw) return { command: "", port: 3000, url: "", runnable: false };
   const [script, pm] = await Promise.all([
-    detectScript(projectPath),
+    detectScript(projectPath, fw.scripts),
     detectPackageManager(projectPath),
   ]);
   if (!script) {
     return { command: "", port: fw.defaultPort, url: "", runnable: false };
   }
-  const command = buildCommand(pm, script, fw.inject, fw.defaultPort);
+  const command = buildCommand(pm, script, fw.inject, fw.defaultPort, fw.noHostFlag);
   return {
     command,
     port: fw.defaultPort,
@@ -177,7 +200,12 @@ export interface ResolvedLaunch {
   customCommand: string | null;
   /** Detected runner pieces (to build the command with the final port), or null
    *  when the project isn't runnable via detection. */
-  detected: { pm: PackageManager; script: string; inject: PortInjection } | null;
+  detected: {
+    pm: PackageManager;
+    script: string;
+    inject: PortInjection;
+    noHostFlag: boolean;
+  } | null;
   /** A fixed port to bind (from config.port or the config.url's port), or null
    *  to free-scan from defaultPort. */
   fixedPort: number | null;
@@ -204,14 +232,17 @@ export async function resolveLaunch(
   // meaningful with a framework plan, so they're skipped without one.
   const [config, script, pm] = await Promise.all([
     readLaunchConfig(projectPath),
-    fw ? detectScript(projectPath) : Promise.resolve(null),
+    fw ? detectScript(projectPath, fw.scripts) : Promise.resolve(null),
     fw ? detectPackageManager(projectPath) : Promise.resolve<PackageManager>("bun"),
   ]);
 
   return {
     customCommand: config.command ?? null,
     // Detected runner is only usable with both a framework plan and a script.
-    detected: fw && script ? { pm, script, inject: fw.inject } : null,
+    detected:
+      fw && script
+        ? { pm, script, inject: fw.inject, noHostFlag: fw.noHostFlag ?? false }
+        : null,
     fixedPort: config.port ?? portFromUrl(config.url) ?? null,
     defaultPort,
     urlOverride: config.url ?? null,

@@ -5,14 +5,19 @@
  * directory whatever port we pass, so "just scan to the next free port" leaves
  * the user with nothing running at all.
  *
- * Both tests spawn a REAL listener in a child process, because the ownership
- * signal is the listening process's working directory.
+ * The adoption tests spawn a REAL listener in a child process, because the
+ * ownership signal is the listening process's working directory.
+ *
+ * Also covered here: `launchable` (the signal the UI auto-runs on) and the
+ * rule that two projects of one framework must not land on the same port.
  */
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startDevServer, stopDevServer } from "./dev-server";
+import { devServerStatus, startDevServer, stopDevServer } from "./dev-server";
+import { writeLaunchConfig } from "./launch-config";
+import { detectProject } from "./detect";
 
 const cleanup: Array<() => void> = [];
 afterAll(() => cleanup.forEach((fn) => fn()));
@@ -83,4 +88,86 @@ posixOnly("does not adopt a port held from outside the project", async () => {
 
   // No adoption → falls through to a normal start, which has nothing to run.
   expect(startDevServer(dir, "node")).rejects.toThrow(/No dev command detected/);
+});
+
+/**
+ * `launchable` is the signal the UI uses to decide whether to auto-run on open.
+ * It has to account for BOTH halves — a configured command and a detected
+ * framework — because the client previously answered it from a hardcoded
+ * framework list and so ignored an explicit `command` in launch.json. That is
+ * why a scaffolded Expo project sat at "not running" with a seeded config
+ * sitting right there on disk.
+ */
+describe("devServerStatus.launchable", () => {
+  test("true from a configured command even when the framework has no plan", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clidable-launchable-"));
+    cleanup.push(() => void rm(dir, { recursive: true, force: true }));
+    await writeLaunchConfig(dir, { command: "bun run web", port: 8081 });
+
+    // A bare directory detects as "unknown", so detection alone would say no —
+    // the configured command is the only thing making this launchable.
+    expect((await devServerStatus(dir)).launchable).toBe(true);
+  });
+
+  test("false when there is neither a config nor a detectable dev script", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clidable-launchable-"));
+    cleanup.push(() => void rm(dir, { recursive: true, force: true }));
+    expect((await devServerStatus(dir)).launchable).toBe(false);
+  });
+});
+
+/**
+ * Two projects of the SAME framework must not collide on a port.
+ *
+ * Expo made this concrete: its dev server defaults to 8081, and a first
+ * attempt at supporting it pinned that port per project via launch.json. Open a
+ * second Expo project in the same workspace and the port was already serving
+ * the FIRST project, so the second reported its neighbour's URL and the preview
+ * showed the wrong app. The fix is that Expo takes an injected `--port` like
+ * any other flag-style framework (its `--help` claims otherwise; measured, it
+ * does), so each project free-scans its own.
+ */
+describe("two projects of one framework", () => {
+  /** A project whose `web` script serves a body identifying itself. */
+  async function expoish(body: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "clidable-multi-"));
+    cleanup.push(() => void rm(dir, { recursive: true, force: true }));
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: body,
+        // `--port <n>` is appended by buildCommand; this stand-in honours it the
+        // way `expo start --web` does, without booting Metro.
+        scripts: { web: `bun -e 'const p=+Bun.argv.at(-1);Bun.serve({port:p,fetch:()=>new Response("${body}")})' --` },
+        dependencies: { expo: "*" },
+      }),
+    );
+    return dir;
+  }
+
+  test("each gets its own port, and each preview serves its own app", async () => {
+    const a = await expoish("APP_A");
+    const b = await expoish("APP_B");
+
+    // Go through detection rather than passing "expo" in: the dependency in
+    // package.json is what a real project has, and hand-feeding the framework
+    // would let this pass even if Expo stopped being detected at all.
+    const [fa, fb] = await Promise.all([detectProject(a), detectProject(b)]);
+    expect(fa.framework).toBe("expo");
+    expect(fb.framework).toBe("expo");
+
+    const ra = await startDevServer(a, fa.framework);
+    const rb = await startDevServer(b, fb.framework);
+    cleanup.push(() => void stopDevServer(a));
+    cleanup.push(() => void stopDevServer(b));
+
+    expect(ra.port).not.toBe(rb.port); // the actual regression
+
+    const [ta, tb] = await Promise.all([
+      fetch(ra.url).then((r) => r.text()),
+      fetch(rb.url).then((r) => r.text()),
+    ]);
+    expect(ta).toBe("APP_A");
+    expect(tb).toBe("APP_B"); // not APP_A — the reported symptom
+  }, 60_000);
 });

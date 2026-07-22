@@ -85,6 +85,26 @@ function scaffoldCommand(
         "bun",
         "--install",
       ];
+    case "expo":
+      // `default` is Expo's own recommended starting point: expo-router (file
+      // based routing, the React Native analogue of Next's App Router) plus
+      // TypeScript — so this matches how we treat Next.js rather than the
+      // stripped-down `blank`.
+      //
+      // Deliberately NOT passing --no-agents-md: create-expo-app writes
+      // AGENTS.md, CLAUDE.md and .claude/settings.json by default, which for a
+      // tool whose whole purpose is running coding agents is the feature, not
+      // noise. It also runs `git init` itself; ensureGitRepo already no-ops
+      // when the scaffolder got there first.
+      return [
+        "bunx",
+        "create-expo-app@latest",
+        name,
+        "--template",
+        "default",
+        "--no-install",
+        "--yes",
+      ];
   }
 }
 

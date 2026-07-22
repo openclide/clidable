@@ -23,6 +23,7 @@ import {
   removeDetectedUrl,
 } from "../preview/detector";
 import { buildCommand, resolveLaunch } from "./launch-config";
+import { detectProject } from "./detect";
 
 type DataSub = (chunk: Uint8Array) => void;
 type ExitSub = () => void;
@@ -75,6 +76,9 @@ export interface DevServerStatus {
   port: number | null;
   url: string | null;
   logs: string[];
+  /** Is there any command to run (configured or detected)? See the shared
+   *  DevServerStatusResponse for why the client must not answer this itself. */
+  launchable: boolean;
 }
 
 // Ports handed out by findFreePort but not yet bound — so two cold starts
@@ -154,7 +158,13 @@ async function doStartDevServer(
     (plan.customCommand ? plan.defaultPort : await findFreePort(plan.defaultPort));
   const command =
     plan.customCommand ??
-    buildCommand(plan.detected!.pm, plan.detected!.script, plan.detected!.inject, port);
+    buildCommand(
+      plan.detected!.pm,
+      plan.detected!.script,
+      plan.detected!.inject,
+      port,
+      plan.detected!.noHostFlag,
+    );
   const url = plan.urlOverride ?? `http://localhost:${port}`;
 
   // Reuse the shell only if it would run the same thing. Re-typing a stale
@@ -262,6 +272,15 @@ function spawnShell(
       // common convention) binds where we probe, without the user hardcoding it.
       // Detected commands inject the port themselves and don't rely on this.
       PORT: String(port),
+      // We render the preview in-app, so no dev server should ever hijack the
+      // user's browser. `BROWSER=none` is the cross-tool convention for that
+      // (react-scripts, webpack-dev-server, Expo, …) and is honoured by each.
+      // Expo is why this is here: `expo start --web` unconditionally runs
+      // `open -a <browser> http://localhost:<port>` on launch, so creating an
+      // Expo project threw the user out into Safari/Chrome instead of showing
+      // the app in the preview pane. Verified in @expo/cli's openBrowserAsync:
+      // it early-returns on a case-insensitive "none".
+      BROWSER: "none",
     },
     onExit: () => handleExit(projectPath, entry),
   });
@@ -592,13 +611,43 @@ export function shutdownDevServers(): void {
   }
 }
 
+/**
+ * Is there any command to run for this project — configured or detected?
+ *
+ * Detects the framework itself rather than taking it as a parameter: a caller
+ * that forgets would silently get "unknown", i.e. a wrong answer for any
+ * project whose runnability comes from detection rather than a config file.
+ *
+ * Only called when the server is NOT already running — see `devServerStatus`.
+ * It costs a launch.json read, a package.json read and five lockfile stats,
+ * which is far too much to repeat on a 3s status poll.
+ */
+async function isLaunchable(projectPath: string): Promise<boolean> {
+  const { framework } = await detectProject(projectPath);
+  const plan = await resolveLaunch(projectPath, framework);
+  return plan.customCommand !== null || plan.detected !== null;
+}
+
 export async function devServerStatus(
   projectPath: string,
 ): Promise<DevServerStatus> {
+  // `launchable` is only probed on the not-running paths. A server that IS
+  // running is launchable by definition — something launched it — so the poll
+  // the UI runs every 3s while a dev server is up does no filesystem work at
+  // all. The client only reads this field when deciding whether to auto-run,
+  // which happens once, on a project that isn't running yet.
   const entry = running.get(projectPath);
   if (!entry || entry.exited) {
     const ext = adopted.get(projectPath);
-    if (!ext) return { running: false, port: null, url: null, logs: [] };
+    if (!ext) {
+      return {
+        running: false,
+        port: null,
+        url: null,
+        logs: [],
+        launchable: await isLaunchable(projectPath),
+      };
+    }
     // An adopted server has to clear the same bar it was adopted on, not just
     // "something accepts TCP here". A wedged dev server keeps its listening
     // socket open forever, and reporting that as running is precisely the
@@ -607,13 +656,19 @@ export async function devServerStatus(
     // ever recover. The pid check catches the other half: the process we
     // adopted died and something unrelated now holds its port.
     if (ext.pids.some(pidAlive) && (await isServingHttp(ext.port))) {
-      return { running: true, port: ext.port, url: ext.url, logs: [] };
+      return { running: true, port: ext.port, url: ext.url, logs: [], launchable: true };
     }
     // The server we adopted went away — forget it (and un-allowlist its port)
     // so the next Run starts a fresh one of our own.
     adopted.delete(projectPath);
     removeDetectedUrl(projectPath, `http://localhost:${ext.port}`);
-    return { running: false, port: null, url: null, logs: [] };
+    return {
+      running: false,
+      port: null,
+      url: null,
+      logs: [],
+      launchable: await isLaunchable(projectPath),
+    };
   }
   if (await isPortUp(entry.port)) {
     return {
@@ -621,10 +676,17 @@ export async function devServerStatus(
       port: entry.port,
       url: entry.url,
       logs: [],
+      launchable: true,
     };
   }
   // Shell alive but nothing on the port (interrupted / not started yet).
-  return { running: false, port: null, url: null, logs: [] };
+  return {
+    running: false,
+    port: null,
+    url: null,
+    logs: [],
+    launchable: await isLaunchable(projectPath),
+  };
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));

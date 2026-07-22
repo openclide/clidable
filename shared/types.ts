@@ -300,17 +300,8 @@ export interface OpenProjectRequest {
 
 /* --- New-Project wizard (§7) --- */
 
-export type ProjectTemplateId =
-  | "blank"
-  | "vite-react"
-  | "vite-svelte"
-  | "vite-vue"
-  | "nextjs"
-  | "astro"
-  | "hono";
-
-export interface ProjectTemplateInfo {
-  id: ProjectTemplateId;
+interface ProjectTemplateShape {
+  id: string;
   label: string;
   description: string;
   /** True if scaffolding needs network + a package manager (vs. pure local). */
@@ -318,8 +309,13 @@ export interface ProjectTemplateInfo {
 }
 
 /** UI-facing template catalog. The actual scaffold commands live server-side
- *  (server/projects/scaffold.ts) — never trust the client for those. */
-export const PROJECT_TEMPLATES: readonly ProjectTemplateInfo[] = [
+ *  (server/projects/scaffold.ts) — never trust the client for those.
+ *
+ *  This array is the single source of truth: `ProjectTemplateId` is DERIVED
+ *  from it below. Declaring the union separately let a template exist as a type
+ *  with no catalog entry — which compiles, passes the exhaustive switch in
+ *  scaffold.ts, and then simply never appears in the picker. */
+export const PROJECT_TEMPLATES = [
   {
     id: "blank",
     label: "Empty folder",
@@ -362,7 +358,30 @@ export const PROJECT_TEMPLATES: readonly ProjectTemplateInfo[] = [
     description: "Minimal Bun web server.",
     needsNetwork: true,
   },
-] as const;
+  {
+    id: "expo",
+    label: "Expo",
+    description: "React Native app (iOS, Android, web) with Expo Router.",
+    needsNetwork: true,
+  },
+] as const satisfies readonly ProjectTemplateShape[];
+
+/** The template ids that exist, DERIVED from the catalog — so a template can't
+ *  be declared as a type with no entry to render. */
+export type ProjectTemplateId = (typeof PROJECT_TEMPLATES)[number]["id"];
+
+/**
+ * One catalog entry, as a normal authorable shape.
+ *
+ * Deliberately NOT `(typeof PROJECT_TEMPLATES)[number]`: that makes every field
+ * a literal type (`label: "Astro" | "Expo" | …`), so a consumer constructing or
+ * transforming a template — a test fixture, a filtered copy — fails to compile
+ * for no good reason. The id union is the part worth deriving; the rest is a
+ * plain interface.
+ */
+export interface ProjectTemplateInfo extends ProjectTemplateShape {
+  id: ProjectTemplateId;
+}
 
 export interface CreateProjectRequest {
   /** Absolute path to the parent directory the new project folder goes in. */
@@ -392,6 +411,18 @@ export interface DevServerStatusResponse {
   url: string | null;
   /** Recent stdout/stderr lines (most-recent last), for a lightweight log peek. */
   logs: string[];
+  /**
+   * Can this project be started at all — i.e. is there a command to run?
+   * True when launch.json configures one, OR when detection found a framework
+   * plus a dev script.
+   *
+   * Answered server-side ON PURPOSE. The client used to keep its own list of
+   * "frameworks we know how to launch", which silently went stale and, worse,
+   * ignored an explicitly configured command: a project with a real `command`
+   * in launch.json still never auto-started because its framework wasn't in
+   * the client's copy.
+   */
+  launchable: boolean;
 }
 
 /* --- Per-project launch config (.clidable/launch.json) --- */
@@ -527,6 +558,16 @@ export interface FsBrowseResponse {
   parent: string | null;
   /** The server's home directory — drives the "⌂ Home" shortcut. */
   home: string;
+  /**
+   * The directory Clidable was launched from (the server's cwd), or null when
+   * it isn't a sensible default. Drives the New-Project location so creating a
+   * project lands next to where you were working, rather than always in ~.
+   *
+   * Null for a desktop app launched from Finder/Dock, whose cwd is "/" — the
+   * whole reason the `clidable open <dir>` CLI exists is that a GUI launch has
+   * no meaningful working directory to inherit.
+   */
+  cwd: string | null;
   /** Sub-directories, alphabetical, hidden/build dirs excluded. */
   dirs: FsBrowseEntry[];
 }

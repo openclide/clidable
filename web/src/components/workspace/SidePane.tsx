@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectFramework } from "@shared/types";
 import { PreviewPane, VIEWPORTS, type Viewport } from "./PreviewPane";
 import { PreviewAddressBar } from "./PreviewAddressBar";
 import { DevTerminalPanel } from "./DevTerminalPanel";
@@ -147,7 +146,6 @@ export function SidePane({
     setDevRunning(false);
     if (!projectPath) return;
     let cancelled = false;
-    const framework = project?.framework;
     void (async () => {
       try {
         const status = await getDevServerStatus(projectPath);
@@ -158,9 +156,16 @@ export function SidePane({
         }
         // Auto-run on open: start the dev server (a free port we assign) and
         // auto-fill the preview. Once per project per session — so a manual
-        // Stop sticks and re-focusing doesn't re-spawn — and only for
-        // frameworks we know how to launch (others no-op gracefully).
-        if (autoRunAttempted.has(projectPath) || !isAutoRunnable(framework)) {
+        // Stop sticks and re-focusing doesn't re-spawn — and only when there is
+        // actually something to run.
+        //
+        // `launchable` comes from the SERVER, which is the only side that knows
+        // both halves: a configured `command` in launch.json OR a detected
+        // framework + dev script. This used to be a hardcoded framework list
+        // here, which meant a project with an explicit command still refused to
+        // auto-start if its framework wasn't on the list — exactly what an Expo
+        // project hit.
+        if (autoRunAttempted.has(projectPath) || !status.launchable) {
           return;
         }
         autoRunAttempted.add(projectPath);
@@ -504,24 +509,6 @@ function Segmented({ value, onChange }: { value: Mode; onChange: (m: Mode) => vo
 // scope so it survives SidePane re-mounts and so a manual Stop isn't
 // immediately undone by re-focusing the project.
 const autoRunAttempted = new Set<string>();
-
-// Frameworks the server's dev-server knows how to launch (mirrors devPlan).
-// Other projects (python/rust/go/expo/unknown — or no dev script) skip
-// auto-run; the ▶ button is still available.
-const AUTO_RUNNABLE: ReadonlySet<ProjectFramework> = new Set([
-  "nextjs",
-  "vite",
-  "sveltekit",
-  "astro",
-  "nuxt",
-  "remix",
-  "hono",
-  "node",
-]);
-
-function isAutoRunnable(framework: ProjectFramework | undefined): boolean {
-  return framework !== undefined && AUTO_RUNNABLE.has(framework);
-}
 
 /** True when the entered URL points at a non-loopback (external) origin —
  *  drives the iframe's X-Frame-Options hint. */

@@ -179,6 +179,8 @@ export async function projectDevStopHandler(req: Request): Promise<Response> {
 export async function projectDevStatusHandler(req: Request): Promise<Response> {
   const projectPath = new URL(req.url).searchParams.get("projectPath");
   if (!projectPath) return err(400, "missing 'projectPath' query param");
+  // Framework detection lives inside devServerStatus, which only pays for it
+  // when it actually needs `launchable` (i.e. when nothing is running).
   return Response.json(await devServerStatus(projectPath));
 }
 

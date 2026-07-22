@@ -137,7 +137,7 @@ describe("resolveLaunch", () => {
     const dir = await project({ "package.json": pkg({ scripts: { dev: "vite" } }), "bun.lock": "" });
     const r = await resolveLaunch(dir, "vite");
     expect(r.customCommand).toBeNull();
-    expect(r.detected).toEqual({ pm: "bun", script: "dev", inject: "flag" });
+    expect(r.detected).toEqual({ pm: "bun", script: "dev", inject: "flag", noHostFlag: false });
     expect(r.fixedPort).toBeNull();
     expect(r.defaultPort).toBe(5173);
     expect(r.urlOverride).toBeNull();
