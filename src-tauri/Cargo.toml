@@ -39,7 +39,16 @@ serde_json = "1.0"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 # OS-level window vibrancy (real desktop blur). See PLAN.md §9.
-window-vibrancy = "0.7"
+#
+# PINNED to 0.6 to match tauri's own internal dependency (macos-private-api
+# pulls window-vibrancy ^0.6; still true at tauri 2.11.5). Two versions in one
+# binary each define the ObjC class `NSVisualEffectViewTagged` — debug builds
+# only warn, but the release profile's `lto = true` dies on "symbol multiply
+# defined" (first seen on the first-ever macOS `tauri build`; dev/check never
+# hit it). Bump this ONLY in lockstep with a tauri release whose requirement
+# moves to the same major/minor — check with:
+#   cargo tree -i window-vibrancy   # exactly one version must appear
+window-vibrancy = "0.6"
 
 # Desktop-only checkpoint screenshots (PLAN.md §2). We snapshot the
 # webview itself (WKWebView.takeSnapshot) rather than the OS screen —
