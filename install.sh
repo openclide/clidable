@@ -30,7 +30,7 @@ case "$os" in
   Darwin) os_slug="darwin" ;;
   Linux)  os_slug="linux" ;;
   MINGW*|MSYS*|CYGWIN*)
-    fail "on Windows, download clidable-server-windows-x64.exe from https://github.com/$REPO/releases" ;;
+    fail "on Windows, download clidable-server-windows-x64.exe (or -windows-arm64.exe on ARM) from https://github.com/$REPO/releases" ;;
   *) fail "unsupported OS: $os" ;;
 esac
 case "$arch" in

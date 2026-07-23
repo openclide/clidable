@@ -19,9 +19,45 @@ bun server/index.ts skills list
 ./dist/clidable-server skills list
 ```
 
-The server binary doubles as the CLI: if the first recognized token is a subcommand (`skills`, `mcp`, `plugins`, `instructions`, `team`), it runs that and exits instead of starting the server.
+The server binary doubles as the CLI: if the first recognized token is a subcommand (`open`, `stop`, `skills`, `mcp`, `plugins`, `instructions`, `team`), it runs that and exits instead of starting the server.
 
 **Scope:** commands that read or write project files operate on the **current working directory** — `cd` into your project first. Running any command group with no (or an unknown) verb prints its usage.
+
+---
+
+## `clidable open`
+
+Open a directory in Clidable — the native app if installed (macOS; other
+platforms open the browser), else the browser. Ensures a background server is
+running first; never becomes a server itself.
+
+```
+clidable open [dir] [--new] [--no-launch] [--print]
+```
+
+- `[dir]` — the folder to open; defaults to the current directory (that cwd
+  capture is the reason this lives in the CLI — a GUI app launched from
+  Finder can't see your terminal's cwd). Use `-- <dir>` for a path starting
+  with `-`.
+- `--new` — always open a fresh workspace instead of resuming the latest one
+  containing this folder.
+- `--no-launch` — ensure the background server is running and print the
+  deep-link URL, but don't open a UI (for scripts and CI).
+- `--print` (alias `--url`) — just print the deep-link URL and exit; starts
+  nothing.
+
+```bash
+clidable open              # this folder, app or browser
+clidable open ~/code/app --new
+clidable open --no-launch  # warm the server, open nothing
+```
+
+## `clidable stop`
+
+Stop the background server (the one `open` starts, or a detached
+`clidable-server`). Prints what it did — stopped it, cleared a stale lock, or
+found nothing running. Desktop-app-owned servers are stopped from the app's
+tray (Quit) instead.
 
 ---
 

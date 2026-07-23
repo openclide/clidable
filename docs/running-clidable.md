@@ -75,7 +75,7 @@ This starts the Bun server (`bun run dev`) and opens a native window pointed at 
 - A native folder picker for opening projects.
 - **Checkpoint screenshots**: the desktop shell can capture the preview pane (permission-free — it snapshots the webview, not your screen), so checkpoints get visual thumbnails in the rewind list.
 
-> **Current limitation:** the production desktop bundle (`bun run tauri:build`) does not yet embed the Bun server as a sidecar — the installable app is not self-contained yet. For now, use `bun run tauri:dev` for the desktop experience, or just use the browser.
+The production desktop bundle (`bun run tauri:build`) embeds the Bun server as a sidecar automatically — the installable app is self-contained.
 
 ## Option 5 — Browser, phone, and tablet
 

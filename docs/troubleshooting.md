@@ -3,7 +3,7 @@
 ## Starting up
 
 **`bun: command not found`**
-Install Bun (`curl -fsSL https://bun.sh/install | bash`) and restart your shell. Clidable needs Bun ≥ 1.3.13.
+Install Bun (`curl -fsSL https://bun.sh/install | bash`) and restart your shell. Clidable needs Bun ≥ 1.3.14.
 
 **The server refuses to start: "refusing to start: Clidable is localhost-only by default — `--bind 0.0.0.0` would expose unauthenticated remote code execution (PTY spawn) to the network…"**
 Working as intended — *any* non-loopback `--bind`/`CLIDABLE_BIND` (a LAN IP, `0.0.0.0`, `::`, a hostname) is refused by default, because it would let anyone who can reach the port spawn terminals on your machine. Bind a loopback address (`127.0.0.1` is the default); see [Remote & VPS Setup](./remote-vps.md) for safe remote access. If you control the network and accept the risk, `--allow-lan` (or `CLIDABLE_ALLOW_LAN=1`) is the intended way to opt in and bind a non-loopback address — the server then starts unauthenticated and prints a loud network-exposed warning.

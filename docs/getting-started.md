@@ -8,7 +8,7 @@ You need three things on the machine that will run Clidable:
 
 ### Bun (required)
 
-Clidable is built on [Bun](https://bun.sh) — it's the runtime, the web server, and the bundler. Version **1.3.13 or newer** is required.
+Clidable is built on [Bun](https://bun.sh) — it's the runtime, the web server, and the bundler. Version **1.3.14 or newer** is required (older Bun has no Windows terminal support).
 
 ```bash
 # macOS / Linux

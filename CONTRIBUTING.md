@@ -5,7 +5,7 @@ PRs are all welcome.
 
 ## Getting set up
 
-You need [Bun](https://bun.sh) ≥ 1.3.13. For the desktop shell you also need the
+You need [Bun](https://bun.sh) ≥ 1.3.14. For the desktop shell you also need the
 Rust toolchain ([rustup](https://rustup.rs)) and your platform's WebView deps
 (Xcode CLT on macOS, WebView2 on Windows, `webkit2gtk` on Linux).
 

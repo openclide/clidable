@@ -125,4 +125,4 @@ Terminals are spawned with the agent launched directly (not a wrapper shell), wi
 - **Linux** — supported (headless/remote use — a VPS behind your own access layer — is the primary use). Desktop shell falls back to a CSS gradient (no compositor blur).
 - **Windows** — supported by design (ConPTY via Bun ≥ 1.3.14, PowerShell-based port scan, Mica/Acrylic in the shell), but less battle-tested than macOS/Linux.
 
-Runtime requirements recap: **Bun ≥ 1.3.13** (to run from source; also needed for scaffolding and managed dev servers even with the compiled binary), **git**, and your agent CLIs.
+Runtime requirements recap: **Bun ≥ 1.3.14** (to run from source; also needed for scaffolding and managed dev servers even with the compiled binary), **git**, and your agent CLIs.
