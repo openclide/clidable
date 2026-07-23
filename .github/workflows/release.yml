@@ -1,11 +1,39 @@
-# Release — push a `v*` tag, get a draft GitHub Release with compiled
-# `clidable-server` binaries for every desktop platform.
+# Release — push a `v*` tag, get ONE draft GitHub Release holding both
+# artifact families:
 #
-# Bun cross-compiles standalone executables from a single host (the target
-# runtime is downloaded and the app bundle embedded), so one Linux runner
-# builds all five targets. Only the host-native binary can be boot-verified
-# here; the others are existence-checked by scripts/build.ts, and their
-# Tailwind/asset correctness is implied by the identical host build.
+#   * `clidable-server-*` — standalone server binaries. Bun cross-compiles
+#     these from a single Linux runner (the target runtime is downloaded and
+#     the app bundle embedded), so one job builds all six targets. Only the
+#     host-native binary can be boot-verified here; the others are
+#     existence-checked by scripts/build.ts, and their Tailwind/asset
+#     correctness is implied by the identical host build.
+#   * `Clidable_*` desktop bundles (.dmg / NSIS+MSI / AppImage+deb+rpm) —
+#     these CANNOT cross-compile from one runner: each needs its platform's
+#     native toolchain (Xcode, MSVC, webkit2gtk), so it's a three-runner
+#     matrix. macOS is one runner producing BOTH archs: an arm64 host
+#     cross-compiles x86_64 via rustup target + a Bun-cross-compiled sidecar.
+#
+# Every job only uploads workflow artifacts; the final `release` job collects
+# them, checksums EVERYTHING into one SHA256SUMS, and creates the draft.
+# (Having each job append to the release instead would race on creating it.)
+# The release job runs as long as the SERVER binaries built (`!cancelled()` +
+# needs.server.result check): a flaked desktop leg must not hold the server
+# release hostage. The draft is human-reviewed before publishing, so a missing
+# platform is visible — "Re-run failed jobs" rebuilds the flaked leg AND
+# re-runs release, which replaces the draft with the full set.
+#
+# Desktop bundles are UNSIGNED for now (signing/notarization is on the
+# roadmap). The `body:` below bakes the workarounds into every draft's notes:
+# macOS 15+ removed the right-click-Open Gatekeeper override, so the working
+# paths are System Settings > Privacy & Security > "Open Anyway", or
+# `xattr -cr /Applications/Clidable.app`; Windows is a SmartScreen
+# "More info" > "Run anyway".
+#
+# After PUBLISHING a release: bump openclide/homebrew-tap
+# Formula/clidable-server.rb (version + per-asset sha256s) — the formula pins
+# exact assets, so until it's bumped `brew upgrade` keeps serving the old
+# version. The release job prints a ready-to-paste checklist with the new
+# hashes in its step summary.
 #
 # The Release is created as a DRAFT — review the artifacts, then publish.
 name: Release
@@ -14,15 +42,57 @@ on:
   push:
     tags: ["v*"]
 
+# Build jobs run large third-party code surfaces (npm postinstalls, cargo
+# build scripts, downloaded NSIS/WiX/linuxdeploy) — they get a read-only
+# token. Only the `release` job, which creates the draft, gets write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
+  # Fail in seconds — not after 30 runner-minutes — on a tag that is doomed:
+  #   * version mismatch: package.json is the single version authority
+  #     (tauri.conf.json inherits it via "version": "../package.json", and
+  #     /api/health + the welcome screen report it). A mismatched tag would
+  #     publish artifacts that self-report a different version.
+  #   * non-numeric pre-release (v0.1.0-rc1): tauri-bundler's WiX
+  #     convert_version() bails on it ("pre-release identifier ... must be
+  #     numeric-only for msi target"), which would otherwise surface 30+
+  #     minutes into the Windows desktop job. Numeric pre-releases (v0.1.0-1)
+  #     are fine.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Tag matches the version authority (package.json)
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(jq -r .version package.json)"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag != package.json version $pkg — bump package.json before tagging"
+            exit 1
+          fi
+          conf="$(jq -r .version src-tauri/tauri.conf.json)"
+          if [ "$conf" != "../package.json" ]; then
+            echo "::error::src-tauri/tauri.conf.json version is \"$conf\" — it must stay \"../package.json\" so package.json remains the single version authority"
+            exit 1
+          fi
+          pre="${tag#*-}"
+          if [ "$pre" != "$tag" ] && ! printf '%s' "$pre" | grep -qE '^[0-9]+$'; then
+            echo "::error::pre-release identifier \"$pre\" is not numeric — the MSI bundler rejects it (WiX allows only numeric pre-release, e.g. v${tag%%-*}-1). Use a numeric pre-release or drop the MSI target for this tag."
+            exit 1
+          fi
+
+  server:
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -66,14 +136,186 @@ jobs:
             mv "$src" "artifacts/${targets[$target]}"
           done
 
-      - name: Checksums
-        working-directory: artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-binaries
+          path: artifacts/*
+          if-no-files-found: error
+
+  desktop:
+    needs: preflight
+    name: desktop (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            runs-on: macos-latest # arm64 host; also cross-builds x86_64
+          - platform: windows
+            runs-on: windows-latest
+          # 22.04, NOT ubuntu-latest: AppImage/deb/rpm don't bundle glibc, so
+          # the build host's glibc is the floor for every user. 24.04 (2.39)
+          # would lock out Ubuntu 22.04 / Debian 12. Tauri's own guidance is
+          # to build on the oldest supported distro. NOTE: GitHub deprecates
+          # the ubuntu-22.04 runner starting 2026-09-17 (retired 2027-04) —
+          # before then, migrate this leg to an ubuntu-22.04 CONTAINER on
+          # ubuntu-latest with the same apt deps installed in-container.
+          - platform: linux
+            runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runs-on }}
+    # 90, not 60: the macOS leg does TWO cold fat-LTO builds (lto=true +
+    # codegen-units=1 over ~500 crates) plus three sidecar compiles, and the
+    # rust cache is cold on every tag (see the rust-cache note below).
+    # Estimated 45-55 min typical, worst case above 60 — the headroom is free
+    # unless hit.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS builds both archs from the arm64 runner — Xcode has always
+          # been able to cross-compile x86_64; only the std target is extra.
+          targets: ${{ matrix.platform == 'macos' && 'x86_64-apple-darwin' || '' }}
+
+      # Tag-ref runs can only restore caches saved on the SAME ref or the
+      # default branch, so a cache saved here is dead weight — never save
+      # (save-if: false). Restoring only works where a main-branch CI job
+      # builds the same environment under the same shared-key:
+      #   * windows: ci.yml's `windows` job (windows-latest, shared-key
+      #     "tauri") — real restores.
+      #   * macos: CI has no macOS rust job — always cold (hence timeout 90).
+      #   * linux: this leg is ubuntu-22.04 while CI runs 24.04; restoring a
+      #     24.04-built dep cache here would poison -sys crate build-script
+      #     outputs (pkg-config paths, webkit versions), so it deliberately
+      #     shares nothing and stays cold.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: ${{ matrix.platform == 'windows' && 'tauri' || format('release-{0}', matrix.platform) }}
+          save-if: false
+
+      # Tauri v2's documented build deps for Ubuntu 22.04. webkit2gtk renders
+      # the window; ayatana-appindicator is required at BUNDLE time because the
+      # app has a tray icon.
+      - name: Linux system deps
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl \
+            wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The x86_64 sidecar must exist BEFORE `tauri build --target x86_64…`:
+      # externalBin is resolved per build target, and beforeBuildCommand only
+      # builds the HOST-triple sidecar (see scripts/build-sidecar.ts). Same
+      # sidecar-must-exist-first rule as the Windows cross-check in CLAUDE.md.
+      # The lipo assert guards the one failure existence checks can't see: a
+      # Bun cross-compile regression silently emitting a host-arch binary,
+      # which would ship Intel users a dmg that dies with "Bad CPU type".
+      - name: Sidecar for macOS x86_64
+        if: matrix.platform == 'macos'
+        run: |
+          bun scripts/build-sidecar.ts --target=bun-darwin-x64 --triple=x86_64-apple-darwin
+          lipo -archs src-tauri/binaries/clidable-server-x86_64-apple-darwin | grep -qx x86_64
+
+      # Host-arch bundle. beforeBuildCommand builds the host sidecar.
+      # macos: .app/.dmg (aarch64) · windows: NSIS + MSI · linux: AppImage/deb/rpm
+      - name: Build desktop bundle
+        run: bun run tauri build
+
+      - name: Build desktop bundle (macOS x86_64)
+        if: matrix.platform == 'macos'
+        run: bun run tauri build --target x86_64-apple-darwin
+
+      # Bundle filenames already carry version + arch (Clidable_0.1.0_aarch64.dmg,
+      # Clidable_0.1.0_x64-setup.exe, …), so a flat copy can't collide.
+      # `-exec … {} +` (via sh -c): the `;` form swallows cp failures — find
+      # exits 0 even when cp fails, so a partial bundle set would ship
+      # silently. Only the `+` form propagates non-zero into find's exit
+      # status (POSIX), and the sh wrapper is needed because `{} +` must be
+      # terminal and BSD cp has no -t.
+      - name: Collect bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundles
+          find src-tauri/target -path '*/release/bundle/*' -type f \
+            \( -name '*.dmg' -o -name '*-setup.exe' -o -name '*.msi' \
+               -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+            -exec sh -c 'cp "$@" bundles/' _ {} +
+          ls -la bundles
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: bundles/*
+          if-no-files-found: error
+
+  release:
+    needs: [server, desktop]
+    # Run whenever the server binaries exist, even if a desktop leg failed —
+    # the draft is reviewed by a human before publishing, and "Re-run failed
+    # jobs" back-fills a flaked leg and re-drafts with the full set. Without
+    # this, one NSIS flake would suppress the entire release.
+    if: ${{ !cancelled() && needs.server.result == 'success' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums (all artifacts, one file)
+        working-directory: dist
         run: sha256sum * > SHA256SUMS
+
+      # The tap pins exact versions + hashes, so it MUST be bumped after
+      # publishing or `brew upgrade` keeps serving the previous release.
+      # This prints the new values ready to paste into
+      # openclide/homebrew-tap Formula/clidable-server.rb.
+      - name: Homebrew tap bump checklist (step summary)
+        working-directory: dist
+        run: |
+          {
+            echo "## After publishing: bump openclide/homebrew-tap"
+            echo ""
+            echo "Formula/clidable-server.rb → version \"${GITHUB_REF_NAME#v}\", then per-asset sha256:"
+            echo ""
+            echo '```'
+            grep -E 'clidable-server-(darwin|linux)-' SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Draft GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
+          body: |
+            ## Installing
+
+            **Server binary** (`clidable-server-*`): download for your
+            platform, `chmod +x`, run — or use the install script / Homebrew
+            tap (see the README).
+
+            **Desktop app**: the bundles below are **unsigned** for now.
+            - **macOS**: after installing the .dmg, either allow it under
+              **System Settings › Privacy & Security › "Open Anyway"** (the
+              old right-click-Open override no longer exists on macOS 15+),
+              or run `xattr -cr /Applications/Clidable.app`.
+            - **Windows**: SmartScreen will warn — **More info › Run anyway**.
           files: |
-            artifacts/*
+            dist/*

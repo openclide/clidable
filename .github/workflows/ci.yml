@@ -66,9 +66,16 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # shared-key (instead of the default job-id key) so release.yml's
+      # desktop legs can restore same-environment caches saved on main —
+      # today that's windows↔windows only (the release linux leg runs 22.04,
+      # not this runner's 24.04, and deliberately shares nothing). Keys
+      # include the host triple, so the two jobs using this name never
+      # collide with each other.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: tauri
 
       - name: cargo check (Linux branch)
         run: cargo check --manifest-path src-tauri/Cargo.toml
@@ -99,9 +106,16 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # shared-key (instead of the default job-id key) so release.yml's
+      # desktop legs can restore same-environment caches saved on main —
+      # today that's windows↔windows only (the release linux leg runs 22.04,
+      # not this runner's 24.04, and deliberately shares nothing). Keys
+      # include the host triple, so the two jobs using this name never
+      # collide with each other.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: tauri
 
       # ONE compile, doing two jobs. Deliberately no --target: with one,
       # scripts/build.ts treats it as a cross-compile and downgrades its check to
