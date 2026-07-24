@@ -50,10 +50,14 @@ async function openInBrowser(url: string): Promise<void> {
         : ["xdg-open", url];
   try {
     const p = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
-    await p.exited;
+    if ((await p.exited) === 0) return;
   } catch {
-    console.log(`clidable: open this URL in your browser:\n  ${url}`);
+    // opener binary missing — fall through to printing the URL
   }
+  // Also reached when the opener EXISTS but fails — the headless-box case
+  // (xdg-open with no DISPLAY exits non-zero). The URL is the useful output
+  // either way; silence here left VPS users with a started server and no clue.
+  console.log(`clidable: open this URL in your browser:\n  ${url}`);
 }
 
 /** The target directory from the args: everything after a `--` is literal (so a
@@ -71,9 +75,13 @@ export async function runOpenCommand(args: string[]): Promise<number> {
   // background server for this dir but don't steal focus / open a UI (for
   // scripts, CI, or "start it, I'll open it myself"). --new: always open a fresh
   // workspace instead of resuming the latest one that contains this folder.
-  const printOnly = args.includes("--print") || args.includes("--url");
-  const noLaunch = args.includes("--no-launch");
-  const forceNew = args.includes("--new");
+  // Flags are only read BEFORE a `--` separator — everything after it is
+  // literal, so a directory named "--print" can't flip the mode it rode in on.
+  const sep = args.indexOf("--");
+  const flags = sep === -1 ? args : args.slice(0, sep);
+  const printOnly = flags.includes("--print") || flags.includes("--url");
+  const noLaunch = flags.includes("--no-launch");
+  const forceNew = flags.includes("--new");
   const port = serverPort();
   const url = `http://127.0.0.1:${port}/?cwd=${encodeURIComponent(dir)}${forceNew ? "&new=1" : ""}`;
 
@@ -103,8 +111,16 @@ export async function runOpenCommand(args: string[]): Promise<number> {
   return 0;
 }
 
-export async function runStopCommand(_args: string[]): Promise<number> {
-  const res = await stopServer();
+export async function runStopCommand(args: string[]): Promise<number> {
+  const res = await stopServer(undefined, { force: args.includes("--force") });
+  if (res.refusedAppOwned) {
+    console.error(
+      "clidable: the running server belongs to the Clidable desktop app — " +
+        "killing it would strand the app's windows.\n" +
+        "Quit the app from its tray instead, or re-run with --force to kill it anyway.",
+    );
+    return 1;
+  }
   if (res.stopped) {
     console.log(`clidable: stopped the background server (pid ${res.pid})`);
   } else if (res.pid) {

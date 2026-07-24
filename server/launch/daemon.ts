@@ -44,6 +44,11 @@ export async function serverHealthy(
 export interface ServerLock {
   pid: number;
   port: number;
+  /** Who spawned this server. "app" = the desktop shell's sidecar — its
+   *  windows die with it and nothing respawns it, so `stop` refuses without
+   *  --force. Absent on locks written before this field existed → treated as
+   *  "cli". */
+  owner?: "app" | "cli";
 }
 
 export function readLock(file: string = paths.serverLock): ServerLock | null {
@@ -58,7 +63,14 @@ export function readLock(file: string = paths.serverLock): ServerLock | null {
 
 export function writeLock(port: number, file: string = paths.serverLock): void {
   try {
-    writeFileSync(file, JSON.stringify({ pid: process.pid, port }), "utf8");
+    // "1" is the exact value the Tauri shell sets on its sidecar spawn
+    // (src-tauri/src/lib.rs ensure_server) — the only writer of this var.
+    const owner = process.env.CLIDABLE_OWNED_BY_APP === "1" ? "app" : "cli";
+    writeFileSync(
+      file,
+      JSON.stringify({ pid: process.pid, port, owner }),
+      "utf8",
+    );
   } catch {
     // best-effort — a missing lock only costs `stop` its target
   }
@@ -118,16 +130,30 @@ export async function ensureServerRunning(
  * Guards against PID reuse: a crash (SIGKILL) leaves a stale lock whose pid the
  * OS may have recycled for an unrelated process, so we only kill when a server
  * is actually answering on the lock's port. If nothing's serving, the server is
- * already gone — clear the stale lock instead of SIGTERM-ing a random pid. */
-export async function stopServer(file: string = paths.serverLock): Promise<{
+ * already gone — clear the stale lock instead of SIGTERM-ing a random pid.
+ *
+ * Refuses an APP-OWNED server unless forced: the desktop shell's sidecar is
+ * the app's entire backend, the app only spawns it at launch, and killing it
+ * strands every open window. `stop` in a terminal means "stop the background
+ * daemon", so the accident is blocked and the deliberate case is `--force` —
+ * the git branch -D pattern. */
+export async function stopServer(
+  file: string = paths.serverLock,
+  opts: { force?: boolean } = {},
+): Promise<{
   stopped: boolean;
   pid?: number;
+  /** True when a live app-owned server was left running (use --force). */
+  refusedAppOwned?: boolean;
 }> {
   const lock = readLock(file);
   if (!lock) return { stopped: false };
   if (!(await serverHealthy(lock.port))) {
     clearLock(file); // nothing serving → the pid is dead or recycled; don't kill it
     return { stopped: false, pid: lock.pid };
+  }
+  if (lock.owner === "app" && !opts.force) {
+    return { stopped: false, pid: lock.pid, refusedAppOwned: true };
   }
   try {
     process.kill(lock.pid, "SIGTERM");

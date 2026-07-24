@@ -85,7 +85,11 @@ fn ensure_server(app: &AppHandle) {
         use tauri_plugin_shell::ShellExt;
         match app.shell().sidecar("clidable-server") {
             Ok(cmd) => {
-                if let Err(e) = cmd.spawn() {
+                // Mark the sidecar app-owned: the server records this in its
+                // lockfile so `clidable stop` refuses to kill the app's own
+                // backend (windows would go dead with nothing to respawn it)
+                // unless passed --force. See server/launch/daemon.ts.
+                if let Err(e) = cmd.env("CLIDABLE_OWNED_BY_APP", "1").spawn() {
                     eprintln!("[clidable] could not spawn server sidecar: {e}");
                 }
             }

@@ -146,6 +146,41 @@ import {
     if (reexec) await reexec(rest);
     else process.exit(await COMMANDS[hit.tok]!(rest));
   }
+
+  // No subcommand matched. Two argv shapes used to fall through to BOOTING A
+  // SERVER (migrations, CLI shim, singleton lock, bind) — the last thing
+  // either should do:
+  //   * `clidable --help` (or -h / help) — answer with usage instead.
+  //   * a typo'd subcommand (`clidable skils …`) — error + usage, exit 2,
+  //     rather than a foreground server silently ignoring the stray word.
+  // A bare word that is the VALUE of a value-taking flag (`--port 7878`) is
+  // not a command attempt, so flag values are skipped when scanning.
+  const USAGE = [
+    "usage: clidable [--port <n>] [--bind <addr>] [--allow-lan] [--dev]   start the server",
+    "       clidable open [dir] [--new] [--no-launch] [--print]           open a folder in Clidable",
+    "       clidable stop [--force]                                       stop the background server",
+    "       clidable skills|mcp|plugins|instructions|team …               agent-toolkit managers",
+    "",
+    "Each command group prints its own usage when run without a verb.",
+    "Docs: https://github.com/openclide/clidable/tree/main/docs",
+  ].join("\n");
+  // argv after the runtime entry: dev runs are `bun server/index.ts …` (entry
+  // at argv[1] === Bun.main); a compiled binary embeds its entry, so user args
+  // start at argv[1].
+  const args = Bun.argv.slice(Bun.argv[1] === Bun.main ? 2 : 1);
+  if (args.some((a) => a === "-h" || a === "--help" || a === "help")) {
+    console.log(USAGE);
+    process.exit(0);
+  }
+  const VALUE_FLAGS = new Set(["--port", "--bind", "--auth", "--tls"]);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (VALUE_FLAGS.has(a)) i++; // skip the flag's value
+    else if (!a.startsWith("-")) {
+      console.error(`clidable: unknown command "${a}"\n\n${USAGE}`);
+      process.exit(2);
+    }
+  }
 }
 
 // parseConfig throws on a misconfig (e.g. a non-loopback --bind). Exit fast and

@@ -9,6 +9,9 @@ Clidable ships a CLI: `clidable <command> …`. It's the same code that powers t
 **Outside Clidable**, any of these are equivalent:
 
 ```bash
+# The installed command (Homebrew / install script put it on PATH):
+clidable skills list
+
 # Via the shim Clidable writes on startup (path varies by OS — see Configuration):
 ~/Library/Application\ Support/Clidable/bin/clidable skills list     # macOS
 
@@ -28,8 +31,11 @@ The server binary doubles as the CLI: if the first recognized token is a subcomm
 ## `clidable open`
 
 Open a directory in Clidable — the native app if installed (macOS; other
-platforms open the browser), else the browser. Ensures a background server is
-running first; never becomes a server itself.
+platforms open the browser), else the browser. It never becomes a server
+itself: on the browser path it starts a background server and health-checks
+it before opening the deep link; on the app path it hands the directory to
+the app — which boots and owns its own server — and returns immediately,
+without waiting for that server to be up.
 
 ```
 clidable open [dir] [--new] [--no-launch] [--print]
@@ -54,10 +60,19 @@ clidable open --no-launch  # warm the server, open nothing
 
 ## `clidable stop`
 
-Stop the background server (the one `open` starts, or a detached
-`clidable-server`). Prints what it did — stopped it, cleared a stale lock, or
-found nothing running. Desktop-app-owned servers are stopped from the app's
-tray (Quit) instead.
+Stop the background server (the one `open` starts, or one you launched
+yourself).
+
+```
+clidable stop [--force]
+```
+
+If the running server belongs to the **desktop app** (its sidecar backend),
+`stop` refuses and exits non-zero — the app can't restart its server, so
+killing it would leave every open window dead until you relaunch. Quit the
+app from its tray instead, or pass `--force` if you really mean it. Prints
+what it did — stopped it, refused, cleared a stale lock, or found nothing
+running.
 
 ---
 
@@ -204,7 +219,7 @@ clidable team result
 When no subcommand is given, the binary starts the server:
 
 ```
-clidable-server [--port <n>] [--bind <addr>] [--allow-lan] [--dev]
+clidable [--port <n>] [--bind <addr>] [--allow-lan] [--dev]
 ```
 
 See [Running Clidable](./running-clidable.md#quick-reference-launch-flags) and the [Configuration Reference](./configuration.md) — including the important caveat that Clidable is **localhost-only by default**: a non-loopback `--bind` makes the server refuse to start unless you add `--allow-lan` (or `CLIDABLE_ALLOW_LAN=1`), which permits the exposure but adds no authentication and prints a loud startup warning. `--auth` / `--tls` refuse to start unconditionally — Clidable has no built-in auth or TLS by design (that's your access layer's job: a tunnel or an authenticating reverse proxy).
