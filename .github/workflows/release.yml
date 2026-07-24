@@ -30,10 +30,10 @@
 # "More info" > "Run anyway".
 #
 # After PUBLISHING a release: bump openclide/homebrew-tap
-# Formula/clidable-server.rb (version + per-asset sha256s) — the formula pins
-# exact assets, so until it's bumped `brew upgrade` keeps serving the old
-# version. The release job prints a ready-to-paste checklist with the new
-# hashes in its step summary.
+# Formula/clidable.rb (version + per-asset sha256s) — the formula pins exact
+# assets, so until it's bumped `brew upgrade` keeps serving the old version.
+# The release job prints a ready-to-paste checklist with the new hashes in its
+# step summary.
 #
 # The Release is created as a DRAFT — review the artifacts, then publish.
 name: Release
@@ -285,23 +285,23 @@ jobs:
       # The tap pins exact versions + hashes, so it MUST be bumped after
       # publishing or `brew upgrade` keeps serving the previous release.
       # This prints the new values ready to paste into
-      # openclide/homebrew-tap Formula/clidable-server.rb.
+      # openclide/homebrew-tap Formula/clidable.rb.
       - name: Homebrew tap bump checklist (step summary)
         working-directory: dist
         run: |
           {
             echo "## After publishing: bump openclide/homebrew-tap"
             echo ""
-            echo "Formula/clidable-server.rb → version \"${GITHUB_REF_NAME#v}\", then per-asset sha256:"
+            echo "Formula/clidable.rb → version \"${GITHUB_REF_NAME#v}\", then per-asset sha256:"
             echo ""
             echo '```'
             grep -E 'clidable-server-(darwin|linux)-' SHA256SUMS
             echo '```'
             echo ""
-            echo "Naming contract (README quick start depends on it): the formula MUST keep"
-            echo '`bin.install … => "clidable"` plus the `clidable-server` compat symlink —'
-            echo "the artifact names above are download filenames, never the typed command."
-            echo "If the formula body changes without a version change, bump \`revision\`."
+            echo "Naming contract (README quick start depends on it): the formula is named"
+            echo '`clidable`, installs `bin.install … => "clidable"`, and owns the bare name'
+            echo "(the desktop app is the separate \`clidable-desktop\` cask). The artifact"
+            echo "names above are download filenames, never the typed command."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Draft GitHub Release

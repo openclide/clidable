@@ -41,7 +41,7 @@ The app carries its own server — there is nothing else to install.
 **Homebrew** (macOS / Linux):
 
 ```sh
-brew install openclide/tap/clidable-server
+brew install openclide/tap/clidable
 clidable
 ```
 
@@ -156,7 +156,8 @@ and the full security model.
 The same binary is the command-line surface. Homebrew and the install script
 put it on PATH as `clidable`; on Windows the downloaded `.exe` itself is the
 command (rename it to `clidable.exe` if you like). The `clidable-server`
-spelling survives only as the download-artifact and brew-formula name:
+spelling survives only as the download-artifact filename (and, inside the
+desktop app, the bundled server binary):
 
 ```sh
 clidable open .          # open this folder in Clidable (app or browser)

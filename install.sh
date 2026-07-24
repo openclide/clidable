@@ -77,18 +77,6 @@ say "checksum verified"
 # -- install ------------------------------------------------------------------
 mkdir -p "$INSTALL_DIR"
 install -m 755 "$tmp/$artifact" "$INSTALL_DIR/clidable"
-# Earlier versions installed under the artifact name; replace with a pointer
-# so both names keep working for anyone who scripted against the old one.
-# `-n`: don't dereference if the old entry is a symlink to a directory (ln
-# would otherwise drop the new link INSIDE it). Relative target: resolves
-# against the symlink's own dir, so it survives the dir being moved and a
-# relative CLIDABLE_INSTALL (an absolute target dangles in both cases).
-# Non-fatal: on symlink-less filesystems (Linux vfat/CIFS) a failure here
-# must not make set -e report a completed install as failed.
-if [ -e "$INSTALL_DIR/clidable-server" ] || [ -L "$INSTALL_DIR/clidable-server" ]; then
-  ln -sfn clidable "$INSTALL_DIR/clidable-server" ||
-    say "note: could not create the clidable-server compat symlink (non-fatal — clidable installed fine)"
-fi
 say "installed $INSTALL_DIR/clidable"
 
 case ":$PATH:" in
