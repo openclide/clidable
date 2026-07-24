@@ -297,6 +297,11 @@ jobs:
             echo '```'
             grep -E 'clidable-server-(darwin|linux)-' SHA256SUMS
             echo '```'
+            echo ""
+            echo "Naming contract (README quick start depends on it): the formula MUST keep"
+            echo '`bin.install … => "clidable"` plus the `clidable-server` compat symlink —'
+            echo "the artifact names above are download filenames, never the typed command."
+            echo "If the formula body changes without a version change, bump \`revision\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Draft GitHub Release

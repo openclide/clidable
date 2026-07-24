@@ -42,7 +42,7 @@ The app carries its own server — there is nothing else to install.
 
 ```sh
 brew install openclide/tap/clidable-server
-clidable-server
+clidable
 ```
 
 **Install script** (macOS / Linux — detects your OS/arch, verifies checksums,
@@ -111,8 +111,8 @@ adds the native touches: a vibrancy window that blurs what's behind it, a
 menu-bar tray with each agent's live status, and a **background server** —
 closing the window keeps your agents running; the tray's Quit is the real
 off-switch. If you also installed the server CLI (Homebrew / install script),
-`clidable-server open .` opens that folder — in the app on macOS, in the
-browser elsewhere.
+`clidable open .` opens that folder — in the app on macOS, in the browser
+elsewhere.
 
 Installers are on the [Releases
 page](https://github.com/openclide/clidable/releases). Building it yourself is
@@ -131,7 +131,8 @@ recommended remote setup never needs that:
 ```sh
 # On the server
 curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up
-clidable-server        # binds 127.0.0.1:7878, as always
+curl -fsSL https://raw.githubusercontent.com/openclide/clidable/main/install.sh | bash
+clidable               # binds 127.0.0.1:7878, as always
 ```
 
 ```sh
@@ -152,17 +153,20 @@ and the full security model.
 
 ## The CLI
 
-The same binary is the command-line surface:
+The same binary is the command-line surface. Homebrew and the install script
+put it on PATH as `clidable`; on Windows the downloaded `.exe` itself is the
+command (rename it to `clidable.exe` if you like). The `clidable-server`
+spelling survives only as the download-artifact and brew-formula name:
 
 ```sh
-clidable-server open .          # open this folder in Clidable (app or browser)
-clidable-server stop            # stop the background server
+clidable open .          # open this folder in Clidable (app or browser)
+clidable stop            # stop the background server
 
-clidable-server skills …        # manage skills across agents
-clidable-server mcp …           # manage MCP servers
-clidable-server plugins …       # manage plugins
-clidable-server instructions …  # manage AGENTS.md / instructions files
-clidable-server team …          # AI-team roles and delegation
+clidable skills …        # manage skills across agents
+clidable mcp …           # manage MCP servers
+clidable plugins …       # manage plugins
+clidable instructions …  # manage AGENTS.md / instructions files
+clidable team …          # AI-team roles and delegation
 ```
 
 See the [CLI reference](docs/cli-reference.md).

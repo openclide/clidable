@@ -99,6 +99,14 @@ Tribal knowledge from [`skills-directory/skill-codex`](https://github.com/skills
 ## Architecture decisions (load-bearing)
 
 - **Bun does everything; Tauri is the picture frame.** ~95% of code in Bun, ~50 LOC Rust.
+- **Naming: `clidable` is the COMMAND, `clidable-server` is a FILENAME.**
+  Everything users type is `clidable` (the startup shim, and what brew /
+  install.sh install). `clidable-server` survives only where a file needs the
+  long name: release artifacts (distinguishable from the `Clidable_*` desktop
+  installers in the same listing), the brew formula name, and the sidecar
+  binary (it sits next to the GUI binary — already named `clidable` — in one
+  folder). Never teach `clidable-server` as something to type; never rename
+  the artifacts (install.sh matches them, tauri `externalBin` embeds them).
 - **Single port (7878)** — Bun.serve handles HTML + API + WS. Dev = prod = same.
 - **PTY-first for agents.** No JSON-stream parsers, no `-p`. The terminal IS the agent UI. (Skill recipes in AI Team are the exception — there the lead agent's TUI invokes a delegate via bash.)
 - **Per-agent skills file layout**:

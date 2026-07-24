@@ -5,8 +5,11 @@
 #
 # Downloads the clidable-server binary for this OS/arch from GitHub Releases,
 # verifies its SHA-256 against the release's SHA256SUMS, and installs it to
-# ~/.local/bin (override with CLIDABLE_INSTALL). curl downloads carry no macOS
-# quarantine attribute, so the binary runs without Gatekeeper prompts.
+# ~/.local/bin AS `clidable` (override the dir with CLIDABLE_INSTALL) — the
+# download artifact is named clidable-server-* to stay distinguishable from
+# the desktop installers, but the command you type is just `clidable`. curl
+# downloads carry no macOS quarantine attribute, so the binary runs without
+# Gatekeeper prompts.
 #
 #   CLIDABLE_VERSION=v0.1.0 …     install a specific tagged release
 #   CLIDABLE_INSTALL=/usr/local/bin …   install elsewhere
@@ -73,8 +76,20 @@ say "checksum verified"
 
 # -- install ------------------------------------------------------------------
 mkdir -p "$INSTALL_DIR"
-install -m 755 "$tmp/$artifact" "$INSTALL_DIR/clidable-server"
-say "installed $INSTALL_DIR/clidable-server"
+install -m 755 "$tmp/$artifact" "$INSTALL_DIR/clidable"
+# Earlier versions installed under the artifact name; replace with a pointer
+# so both names keep working for anyone who scripted against the old one.
+# `-n`: don't dereference if the old entry is a symlink to a directory (ln
+# would otherwise drop the new link INSIDE it). Relative target: resolves
+# against the symlink's own dir, so it survives the dir being moved and a
+# relative CLIDABLE_INSTALL (an absolute target dangles in both cases).
+# Non-fatal: on symlink-less filesystems (Linux vfat/CIFS) a failure here
+# must not make set -e report a completed install as failed.
+if [ -e "$INSTALL_DIR/clidable-server" ] || [ -L "$INSTALL_DIR/clidable-server" ]; then
+  ln -sfn clidable "$INSTALL_DIR/clidable-server" ||
+    say "note: could not create the clidable-server compat symlink (non-fatal — clidable installed fine)"
+fi
+say "installed $INSTALL_DIR/clidable"
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
@@ -82,4 +97,4 @@ case ":$PATH:" in
     export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
 esac
 
-say "run it:  clidable-server   →  http://127.0.0.1:7878"
+say "run it:  clidable   →  http://127.0.0.1:7878"

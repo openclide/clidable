@@ -103,8 +103,12 @@ Terminal sessions *do* survive browser disconnects while the server stays up —
 
 ## Quick reference: launch flags
 
+`clidable` here is the command the [install script / Homebrew](../README.md#quick-start)
+put on PATH; a source build takes the same flags as `./dist/clidable-server`,
+and dev mode reads the env vars.
+
 ```bash
-clidable-server [--port 7878] [--bind 127.0.0.1] [--allow-lan] [--dev]
+clidable [--port 7878] [--bind 127.0.0.1] [--allow-lan] [--dev]
 ```
 
 | Flag | Env var | Default | Meaning |

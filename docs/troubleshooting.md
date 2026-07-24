@@ -13,7 +13,7 @@ Also as intended — Clidable has no request-time auth or TLS by design (that's 
 
 **Port 7878 is already in use**
 Run on another port: `bun run dev` reads `CLIDABLE_PORT`, or pass `--port`:
-`CLIDABLE_PORT=8900 bun run dev` · `./dist/clidable-server --port 8900`
+`clidable --port 8900` · `CLIDABLE_PORT=8900 bun run dev` · `./dist/clidable-server --port 8900`
 
 **Startup error mentioning the npm `bun` package / postinstall**
 If `bun install` warned about blocked postinstall scripts, run `bun pm trust --all` (the repo's `trustedDependencies` should normally handle this).

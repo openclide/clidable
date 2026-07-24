@@ -324,7 +324,7 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 
 **Decision**: One Bun binary, **localhost-only by design**. Remote access is the user's *access layer*, not Clidable's job — so Clidable ships **no built-in auth or TLS, ever**.
 
-- **Local mode** (default, used by the Tauri shell): `clidable-server --bind 127.0.0.1` (the default). Loopback-only, single-user, no auth needed — nothing off-box can reach it.
+- **Local mode** (default, used by the Tauri shell): `clidable --bind 127.0.0.1` (the default). Loopback-only, single-user, no auth needed — nothing off-box can reach it.
 - **Remote access**: keep the loopback bind and put an **access layer** in front — **Tailscale/WireGuard** (recommended), **Cloudflare Tunnel + Access**, or an authenticating reverse proxy. That layer owns TLS *and* auth.
 - **`--allow-lan` escape hatch**: binds beyond loopback for a firewalled/VPN'd network you control. Adds no auth; prints a loud network-exposed warning. `--auth`/`--tls` are refused unconditionally (`refusing to start: Clidable has no built-in auth/TLS by design …`).
 - **Same-site gate + loopback-`Host` check** shield `/api` and the preview proxy from drive-by browser requests (CSRF / DNS-rebind) even on an `--allow-lan` bind — a hardening layer, **not** auth (`server/net/origin.ts`).

@@ -2,7 +2,7 @@
  * CLI flag parsing for the Bun server.
  *
  * Clidable is LOCALHOST-ONLY by default:
- *   clidable-server --port 7878 --bind 127.0.0.1   (loopback; the default)
+ *   clidable --port 7878 --bind 127.0.0.1   (loopback; the default)
  *
  * A non-loopback bind exposes an unauthenticated PTY-spawner (RCE) to the
  * network, so it is refused UNLESS the user explicitly opts in with

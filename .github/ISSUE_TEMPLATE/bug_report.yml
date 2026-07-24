@@ -22,7 +22,7 @@ body:
       label: How are you running Clidable?
       options:
         - Browser (bun run dev)
-        - Compiled server binary (clidable-server)
+        - Compiled server binary (installed as `clidable` / clidable-server)
         - Desktop app (Tauri)
         - Other / not sure
     validations:

@@ -17,7 +17,15 @@ Everything (projects, agents, terminals, checkpoints) lives on the **server**. Y
 
 ## Step 1 — Install on the server
 
-On a fresh Ubuntu/Debian VPS (adapt for your distro):
+The quickest route is the install script — it downloads the compiled binary,
+verifies its checksum, and puts `clidable` on PATH (no Bun needed to *run*
+the server, though scaffolding and managed dev servers still want it):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/openclide/clidable/main/install.sh | bash
+```
+
+Or build from source on a fresh Ubuntu/Debian VPS (adapt for your distro):
 
 ```bash
 # Essentials
