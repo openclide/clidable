@@ -81,10 +81,36 @@ Inside each **project**, Clidable creates at most:
 ```
 .clidable/project-id       # UUID — the project's stable identity (survives rename/move)
 .clidable/.gitignore       # keeps the above out of your repo
+.clidable/launch.json      # dev-server overrides (only if you saved any — see below)
 .clidable/ai-team.json     # AI-team role config (only if you use the Team feature)
 AGENTS.md, CLAUDE.md, …    # only if you use the Instructions feature
 .claude/skills/ etc.       # only if you install skills / team roles
 ```
+
+## Per-project dev-server config (`.clidable/launch.json`)
+
+How the preview's Run dot starts *this* project's dev server. Normally you never touch it — detection covers the common stacks — but every part can be overridden from the UI (▾ ports menu → **Configure dev server…**), which saves this file:
+
+```json
+{
+  "command": "npm run dev",
+  "port": 3000,
+  "url": "http://myserver.tail1234.ts.net:3000"
+}
+```
+
+| Field | Meaning | When omitted |
+|---|---|---|
+| `command` | Shell command that starts the dev server | Auto-built: lockfile picks the package manager (bun / pnpm / yarn / npm; Bun assumed when there's no lockfile), `package.json` scripts pick the script, the framework decides port passing |
+| `port` | Local port the server binds; also exported as `$PORT` to the command | The framework's default (Vite 5173, Next 3000, Astro 4321, Expo 8081, …), free-scanned upward if taken. With a custom `command` there's no scan — the default is used as-is, so set `port` explicitly if it might be busy |
+| `url` | The URL the preview iframe loads — the remote/Tailscale escape hatch | `http://localhost:<port>` |
+
+Rules worth knowing:
+
+- **Every field is optional** — set only what detection gets wrong. Saving the form with everything blank deletes the file (back to pure auto).
+- An explicit port **in the `url`** (e.g. `…:3000`) also pins the local bind port; a port-less `url` (e.g. `https://box.ts.net`) deliberately doesn't — Clidable won't try to bind 443.
+- The file is plain JSON, safe to hand-edit and commit; invalid values are ignored rather than breaking startup.
+- Detected frameworks with a launch plan: Vite, SvelteKit, Astro, Expo (port as a flag) and Next.js, Nuxt, Remix, Hono, generic Node (port as `PORT`). Python / Rust / Go projects have no auto plan — set a `command` here, or start the server in a terminal and let detection pick it up.
 
 ## Supported agents
 
@@ -105,11 +131,11 @@ Terminals are spawned with the agent launched directly (not a wrapper shell), wi
 
 ## Project templates & framework detection
 
-**Templates** (new-project wizard): Empty folder, Vite + React, Vite + Svelte, Vite + Vue, Next.js, Astro, Hono. Scaffolding uses the official generators via Bun (`bun create vite …`, `bunx create-next-app@latest …`), runs non-interactively with a 4-minute timeout, installs dependencies, and git-inits with a first commit.
+**Templates** (new-project wizard): Empty folder, Vite + React, Vite + Svelte, Vite + Vue, Next.js, Astro, Hono, Expo. Scaffolding uses the official generators via Bun (`bun create vite …`, `bunx create-next-app@latest …`, `bunx create-expo-app@latest …`), runs non-interactively with a 4-minute timeout, installs dependencies, and git-inits with a first commit.
 
 **Detection** (opening an existing project): Next.js, Remix, Expo, SvelteKit, Nuxt, Astro, Vite, Hono, generic Node (from `package.json`); Rust (`Cargo.toml`); Python (`pyproject.toml` / `requirements.txt` / `manage.py`); Go (`go.mod`).
 
-**Managed dev server** (the Run dot in the preview address bar): supported for Vite, SvelteKit, Astro (port passed as `--port`) and Next.js, Nuxt, Remix, Hono, Node (port passed as `PORT` env). A free port is picked starting from the framework's default (Vite 5173, Next 3000, Astro 4321, …). Other stacks: run your dev server in the terminal; the preview auto-detects it.
+**Managed dev server** (the Run dot in the preview address bar): supported for Vite, SvelteKit, Astro, Expo (port passed as `--port`) and Next.js, Nuxt, Remix, Hono, Node (port passed as `PORT` env), run with your project's own package manager (bun / pnpm / yarn / npm, detected from the lockfile; Bun assumed when there's none). A free port is picked starting from the framework's default (Vite 5173, Next 3000, Astro 4321, Expo 8081, …). On Windows, the `PORT`-env family doesn't currently launch from the Run dot (the injected env prefix is POSIX syntax) — start those from a terminal, or set a custom command. Everything is overridable per project — see [`.clidable/launch.json`](#per-project-dev-server-config-clidablelaunchjson). Other stacks: set a command there, or run your dev server in the terminal; the preview auto-detects it.
 
 ## Network behavior
 
@@ -121,8 +147,8 @@ Terminals are spawned with the agent launched directly (not a wrapper shell), wi
 
 ## Platform support
 
-- **macOS** — fully exercised; the development platform. Desktop shell has native vibrancy blur.
-- **Linux** — supported (headless/remote use — a VPS behind your own access layer — is the primary use). Desktop shell falls back to a CSS gradient (no compositor blur).
-- **Windows** — supported by design (ConPTY via Bun ≥ 1.3.14, PowerShell-based port scan, Mica/Acrylic in the shell), but less battle-tested than macOS/Linux.
+- **macOS** — fully exercised; the development platform. Desktop app (`.dmg`, Apple silicon + Intel) has native vibrancy blur.
+- **Linux** — supported, both headless (a VPS behind your own access layer) and as a desktop app (AppImage / `.deb` / `.rpm`; the shell falls back to a CSS gradient — no compositor blur API on Linux).
+- **Windows** — supported (ConPTY terminals, PowerShell-based port scan, Acrylic/Mica in the desktop app; setup `.exe` / `.msi` installers), but less battle-tested than macOS/Linux.
 
-Runtime requirements recap: **Bun ≥ 1.3.14** (to run from source; also needed for scaffolding and managed dev servers even with the compiled binary), **git**, and your agent CLIs.
+Runtime requirements recap: **git** and your agent CLIs, everywhere. **Bun ≥ 1.3.14** only to run from source, to use the new-project templates (scaffolding runs `bun create …`), or when the Run dot starts a project with no lockfile (Bun is the assumed package manager).

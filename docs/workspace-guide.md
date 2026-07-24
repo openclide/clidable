@@ -7,9 +7,9 @@ A full tour of the Clidable UI, from the welcome screen to multi-project, multi-
 What you see when Clidable opens (or when you click the home button later):
 
 - **Agent row** — icons for every supported agent: Claude Code, Codex CLI, Antigravity CLI, Cursor, Qwen Code, Kimi CLI, OpenCode, GitHub Copilot. Installed agents are full-color; missing ones are dimmed with an amber dot (hover shows the install command). Click an agent to start a session with it.
-- **Recent projects** — every project you've opened, with its path, last-used agent, and how long ago. Click to jump straight back in with that agent.
+- **Workspaces** — your saved sessions, newest first. A workspace is the whole thing: the open projects (multi-project ones are labeled "First +N" with a project-count badge), the pane layout, and every terminal in it. Click one to resume it exactly where you left off — in the desktop app, the **Open in new window** button on each row puts it in its own window.
 - **Open a project** — browse the filesystem (of the machine running the server) and register any existing folder.
-- **Create a project** — the new-project wizard: pick a name, location, and template (Empty folder, Vite + React/Svelte/Vue, Next.js, Astro, Hono). Clidable runs the official scaffolder, installs dependencies, and git-inits with a first commit.
+- **Create a project** — the new-project wizard: pick a name, location, and template (Empty folder, Vite + React/Svelte/Vue, Next.js, Astro, Hono, Expo). Clidable runs the official scaffolder, installs dependencies, and git-inits with a first commit.
 
 ## Workspace layout
 
@@ -45,7 +45,7 @@ Each terminal runs a real PTY on the server with the agent launched directly in 
 - **Split panes (tmux-style)**: the **+** menu on a terminal tile offers **New terminal (side)**, **New terminal (bottom)**, and **New tab**. Drag the dividers to resize (with snap detents at ⅓ / ½ / ⅔).
 - **Tabs within a pane**: each pane can hold multiple terminal tabs — switch by clicking the pills in the tile header.
 - **Mix agents and projects freely**: run Claude on project A next to Codex on project B.
-- **Sessions survive disconnects**: refresh the browser, switch networks, let your phone sleep — the session keeps running on the server and replays its recent output (256 KB scrollback) when you reattach. Sessions left with no client for 10+ minutes are reaped.
+- **Sessions are durable**: refresh the browser, switch networks, let your phone sleep — the session keeps running on the server and replays its recent output (256 KB scrollback) when you reattach. Keeping any tab attached (even backgrounded, even with the terminal minimized to the dock) keeps a session hot; one left with **no client at all** for 10+ minutes is parked — its process stops, but reopening it resumes the agent's conversation via the agent's own resume feature. Even a server restart doesn't lose the conversation — [what survives](./running-clidable.md#stopping-and-what-survives).
 
 ## The composer
 
@@ -103,6 +103,7 @@ One capsule, left to right:
 4. **Ports menu (▾)** —
    - **Detected**: URLs Clidable noticed by scanning terminal output *and* by inspecting your agents' processes for listening ports — when your agent runs `npm run dev`, the URL shows up here by itself.
    - **Dev-server terminal**: opens the log panel for the managed dev server.
+   - **Configure dev server…**: per-project overrides for the dev command, port, and preview URL (see below).
    - **Common ports**: one-click presets — Vite 5173, Next.js 3000/3001, Astro 4321, Angular 4200, Webpack/Vue 8080, Metro 8081, Django/FastAPI 8000, Flask 5000, Storybook 6006, Gradio 7860, Ollama 11434. Each is liveness-probed before navigating, so you don't land on a blank page.
 5. **Open externally** — the current URL in your system browser.
 
@@ -110,10 +111,11 @@ One capsule, left to right:
 
 For recognized project types, the Run dot starts the dev server for you — in a real shell you can inspect (the **dev-server terminal** in the ports menu shows its live output):
 
-- **Vite / SvelteKit / Astro** — `bun run dev` with an explicit `--port`.
-- **Next.js / Nuxt / Remix / Hono / Node** — `bun run dev` with a `PORT` env var.
-- Clidable picks a free port automatically and navigates the preview when the server is up.
-- For everything else (Python, Rust, Go, Expo, …), just run your dev server in the agent terminal — the **Detected** list will pick it up.
+- **The command is built from your project**: the lockfile picks the package manager (bun / pnpm / yarn / npm — Bun is assumed when there's no lockfile), your `package.json` scripts pick the script, and the framework decides how the port is passed — as a `--port` flag for Vite / SvelteKit / Astro / Expo, as a `PORT` env var for Next.js / Nuxt / Remix / Hono / Node. (On Windows, the `PORT`-env family doesn't currently launch from the Run dot — start those in a terminal, or set a Windows-friendly command in *Configure dev server…*.)
+- Clidable picks a free port automatically and navigates the preview when the server is up. Already started a dev server yourself? On macOS/Linux Clidable **adopts** the one it finds running in your project instead of fighting it for the port (on Windows it scans to the next free port instead).
+- **Configure dev server…** (▾ ports menu) overrides any of it per project: the **command** (any shell command), the **local port**, and the **preview URL** — what the iframe loads; set a reachable host (e.g. a Tailscale name) when Clidable runs on a remote server. Overrides are saved to `.clidable/launch.json` and apply from every device — details in the [Configuration Reference](./configuration.md#per-project-dev-server-config-clidablelaunchjson).
+- **If a start fails** — no dev command detected, or the port never comes up — the preview shows an explanatory banner with a one-click path to *Configure dev server…*; when the failure came from clicking the Run dot, the dev-server terminal also opens so you can see the real output.
+- For everything else (Python, Rust, Go, …), either set a command in *Configure dev server…* or just run your dev server in the agent terminal — the **Detected** list will pick it up.
 
 ### Viewport & behavior
 
@@ -131,6 +133,15 @@ Buttons in the top chrome (behind the tools menu on mobile). Each opens a manage
 - **Plugins** — manage Claude Code / Codex plugins and marketplaces.
 - **MCP** — add/remove MCP servers (npx package, raw command, or HTTP/SSE endpoint) across agents.
 - **Context** — edit your project's `AGENTS.md` (the canonical instructions file) and wire up pointer files so every agent reads the same instructions.
+
+## Desktop app extras
+
+Running the [desktop app](./running-clidable.md#option-1--the-desktop-app)? A few things exist only there:
+
+- **The menu-bar tray** lists every live agent with a status dot — blue = working, amber = waiting for your input, green = done, gray = idle — plus **Show Clidable** and **Quit Clidable**. The tray icon itself carries a pip showing the most urgent state across all agents (waiting beats done beats working), so you can park the app and glance at the menu bar. Clicking an agent row jumps to it; hovering over or opening the tray acknowledges finished agents (the green pip clears once you've seen it).
+- **Closing the main window doesn't stop anything** — it hides, and your agents keep running; the tray's **Quit Clidable** is the real off-switch. Closing an *extra* workspace window is like closing a browser tab: its sessions park after 10 unattended minutes and resume when you reopen the workspace.
+- **Multiple windows** — *Open in new window* on a workspace row (welcome screen) gives each workspace its own window; `clidable open <dir>` from a terminal opens that folder in the app too.
+- **Checkpoint thumbnails** — the app snapshots the preview pane at each checkpoint, so the rewind list gets visual thumbnails.
 
 ## Mobile
 

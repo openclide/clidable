@@ -6,8 +6,8 @@
  *
  * Both shell out via `Bun.spawn(["git", "-C", <repoTop>, ...])`. We
  * resolve the repo toplevel once per request — if `root` is nested
- * inside a larger repo (e.g. the `examples/acme-saas` mock projects
- * live inside Clidable's own repo), we scope all status / diff output
+ * inside a larger repo (e.g. a project folder nested in a monorepo),
+ * we scope all status / diff output
  * to the subtree at `root` by translating between repo-toplevel paths
  * (what git emits and `git show :path` requires) and project-root
  * paths (what the UI uses everywhere else).

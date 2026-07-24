@@ -3,9 +3,10 @@
  *
  *   bun scripts/verify-checkpoints.ts
  *
- * Walks through the full create → list flow against the acme-saas
- * example project, then prints the shadow git log and SQLite rows so
- * the human reviewer can sanity-check the result.
+ * Walks through the full create → list flow against a throwaway
+ * scratch project it provisions in the OS temp dir, then prints the
+ * shadow git log and SQLite rows so the human reviewer can
+ * sanity-check the result.
  *
  * What it asserts:
  *   1. Project UUID is created and stable across calls.
@@ -21,6 +22,7 @@
  * persist for inspection.
  */
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../server/db";
 import { ensureDirs } from "../server/paths";
@@ -37,12 +39,10 @@ import {
   shadowGitDir,
 } from "../server/checkpoints/paths";
 
-const PROJECT_PATH = join(
-  import.meta.dir,
-  "..",
-  "examples",
-  "acme-saas",
-);
+// Self-provisioned scratch project — nothing in the repo is touched.
+// Kept between runs (resetProject relies on the UUID file to clean up
+// the prior run's shadow repo + rows before minting fresh state).
+const PROJECT_PATH = join(tmpdir(), "clidable-verify-checkpoints");
 
 // Scratch path we'll mutate between checkpoints.
 const SCRATCH_FILE = join(PROJECT_PATH, "_verify.tmp");
@@ -56,6 +56,19 @@ async function main(): Promise<void> {
   openDb();
 
   console.log("→ project:", PROJECT_PATH);
+
+  // ── Step 0a: provision the scratch project (idempotent).
+  await mkdir(join(PROJECT_PATH, "src"), { recursive: true });
+  await writeFile(
+    join(PROJECT_PATH, "package.json"),
+    JSON.stringify({ name: "clidable-verify-scratch", private: true }, null, 2) + "\n",
+    "utf8",
+  );
+  await writeFile(
+    join(PROJECT_PATH, "src", "app.ts"),
+    "export const answer = 42;\n",
+    "utf8",
+  );
 
   // ── Step 0: scrub any leftover state from a prior run so the
   //            assertions further down can rely on a clean slate.

@@ -2,26 +2,51 @@
 
 This guide takes you from zero to chatting with a coding agent in Clidable, in about 5 minutes.
 
-## 1. Prerequisites
+## 1. Install Clidable
 
-You need three things on the machine that will run Clidable:
+Pick **one** of these — they all end in the same UI.
 
-### Bun (required)
+### The desktop app (recommended on your own machine)
 
-Clidable is built on [Bun](https://bun.sh) — it's the runtime, the web server, and the bundler. Version **1.3.14 or newer** is required (older Bun has no Windows terminal support).
+A native window with OS-level glass, a menu-bar tray showing each agent's live status, and a background server — closing the window keeps your agents running.
+
+- **macOS** — `brew install --cask openclide/tap/clidable-desktop`, or download the `.dmg` (Apple silicon or Intel) from the [Releases page](https://github.com/openclide/clidable/releases).
+- **Windows** — download and run the `Clidable_…-setup.exe` (or `.msi`) installer.
+- **Linux** — grab the AppImage, `.deb`, or `.rpm`.
+
+The app carries its own server — nothing else to install.
+
+### The `clidable` command (browser UI, servers, scripting)
+
+One binary that is both the server and the CLI. Install it with whichever tool you already use:
 
 ```bash
-# macOS / Linux
-curl -fsSL https://bun.sh/install | bash
-
-# Windows (PowerShell)
-powershell -c "irm bun.sh/install.ps1 | iex"
-
-# Or via Homebrew
-brew install oven-sh/bun/bun
+brew install openclide/tap/clidable          # Homebrew (macOS / Linux)
 ```
 
-Verify: `bun --version`
+```bash
+npm install -g clidable                      # npm (any OS with Node)
+```
+
+```bash
+# Install script (macOS / Linux) — detects OS/arch, verifies checksums, installs to ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/openclide/clidable/main/install.sh | bash
+```
+
+On Windows you can also download `clidable-server-windows-x64.exe` (or `-windows-arm64.exe` on Snapdragon-X / ARM machines) from the [Releases page](https://github.com/openclide/clidable/releases) — rename it to `clidable.exe` and that's the `clidable` command.
+
+### From source (contributors)
+
+Needs [Bun](https://bun.sh) ≥ 1.3.14:
+
+```bash
+git clone https://github.com/openclide/clidable.git
+cd clidable && bun install && bun run dev
+```
+
+See [Running Clidable](./running-clidable.md#option-3--from-source) for the details.
+
+## 2. Install the prerequisites
 
 ### Git (required)
 
@@ -46,28 +71,32 @@ Clidable is a GUI *for* CLI agents — install whichever ones you use:
 
 On the welcome screen, agents that aren't found on your `PATH` appear dimmed with an amber dot — hover for the install hint.
 
-## 2. Install Clidable
+### Bun (only for some features)
+
+The app and the installed `clidable` binary don't need Bun to run. You only need [Bun](https://bun.sh) on the machine if you:
+
+- **scaffold new projects from templates** (the wizard runs `bun create …` / `bunx …`),
+- **use the preview's Run button on a project with no lockfile** (Bun is the assumed package manager when there's none to detect), or
+- **run Clidable from source**.
 
 ```bash
-git clone https://github.com/openclide/clidable.git
-cd clidable
-bun install
+curl -fsSL https://bun.sh/install | bash          # macOS / Linux
+powershell -c "irm bun.sh/install.ps1 | iex"      # Windows
 ```
 
 ## 3. Run it
 
-```bash
-bun run dev
-```
-
-You'll see:
+- **Desktop app** — just open it.
+- **CLI** — run `clidable` and open **http://127.0.0.1:7878** in any browser. You'll see:
 
 ```
-[clidable] listening on http://127.0.0.1:7878 (dev, HMR)
+[clidable] listening on http://127.0.0.1:7878 (prod)
 [clidable] data:  ~/Library/Application Support/Clidable   (macOS; varies by OS)
+[clidable] cache: ~/Library/Caches/Clidable
+[clidable] log:   ~/Library/Logs/Clidable
 ```
 
-Open **http://127.0.0.1:7878** in any browser. That's it — Clidable is a web app served by its own built-in server. (For the native desktop window, production builds, and remote setups, see [Running Clidable](./running-clidable.md).)
+Either way you land on the same welcome screen. (For remote servers and phones, see [Remote & VPS Setup](./remote-vps.md).)
 
 ## 4. Open your first project
 
@@ -86,8 +115,9 @@ On the welcome screen you have three paths:
    | Next.js | App Router + Tailwind + TypeScript |
    | Astro | Static-first content site |
    | Hono | Minimal Bun web server |
+   | Expo | React Native + expo-router + TypeScript |
 
-   Scaffolding runs the official generator (`bun create vite`, `create-next-app`, …), installs dependencies, and initializes a git repo with a first commit. It needs network access and can take a minute or two.
+   Scaffolding runs the official generator (`bun create vite`, `create-next-app`, `create-expo-app`, …), installs dependencies, and initializes a git repo with a first commit. It needs network access (and Bun) and can take a minute or two.
 
 When the project opens you land in the **workspace**: the agent is already running in a terminal, ready for input.
 
@@ -111,7 +141,15 @@ Made the agent break something? Click the **rewind icon** in the composer footer
 
 Checkpoints live in a *shadow* git repository in Clidable's data folder — your project's own `.git` is never touched. Full details: [Checkpoints](./checkpoints.md).
 
-## 7. Explore from here
+## 7. Walk away — it keeps working
+
+Sessions are durable. Close the tab (or the desktop window) while an agent is mid-task and it **keeps running on the server**; come back and the terminal reattaches with its recent output replayed. The welcome screen lists your **workspaces** — click one to restore the whole layout: every project, terminal, and pane exactly where you left it.
+
+One caveat: a session with **no client attached at all** is parked after ~10 minutes — its process stops, and reopening it resumes the agent's conversation (with a fresh screen). For a long-running task, keep a tab attached; backgrounded or minimized counts.
+
+Even across a server restart or reboot, reopening a workspace resumes each agent's *conversation* via the agent's own resume feature (Claude Code, Codex, Antigravity, and others) — details in [Running Clidable](./running-clidable.md#stopping-and-what-survives).
+
+## 8. Explore from here
 
 - **Preview your app** — start your dev server (Clidable can do it for you) and watch it live in the right-hand pane: [Workspace Guide → Preview](./workspace-guide.md#the-preview-pane).
 - **Edit code** — a full CodeMirror editor with VS Code keybindings and a git diff view: [Workspace Guide → Code pane](./workspace-guide.md#the-code-pane).

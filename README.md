@@ -32,7 +32,13 @@ tab**.
 ## Quick start
 
 **Desktop app** — download the installer for macOS, Windows, or Linux from the
-[Releases page](https://github.com/openclide/clidable/releases) and open it.
+[Releases page](https://github.com/openclide/clidable/releases) and open it —
+or on macOS:
+
+```sh
+brew install --cask openclide/tap/clidable-desktop
+```
+
 The app carries its own server — there is nothing else to install.
 
 **Prefer the browser?** Run just the server and open
@@ -42,6 +48,13 @@ The app carries its own server — there is nothing else to install.
 
 ```sh
 brew install openclide/tap/clidable
+clidable
+```
+
+**npm** (any OS with Node):
+
+```sh
+npm install -g clidable
 clidable
 ```
 
@@ -88,10 +101,11 @@ Either way you land in the same UI:
 - **Checkpoints you can rewind** — a snapshot before every message, kept in a
   private shadow-git repo. Restore the whole project in one click; your real
   `.git` is never touched.
-- **Sessions that survive you** — close the tab, close the window, come back
-  later: agents keep working, and the terminal picks up with scrollback
-  intact. Live status (working / needs you / done) shows on the workspace dock
-  and in the desktop app's menu-bar tray.
+- **Sessions that survive you** — close the tab and reconnect: the terminal
+  picks up with its recent output replayed. Step away entirely and the
+  session parks; reopening resumes the agent's conversation — even across a
+  server restart. Live status (working / needs you / done) shows on the
+  workspace dock and in the desktop app's menu-bar tray.
 - **A code editor with diffs** — VS-Code-feel editing beside the terminal, and
   per-checkpoint diffs of what the agent changed.
 - **MCP, skills & plugins, once** — install a thing one time and Clidable
@@ -101,8 +115,8 @@ Either way you land in the same UI:
   terminals.
 - **Multi-project workspaces** — several projects side by side, each with its
   own agents, tabs, and preview.
-- **Everywhere** — any browser, an installable PWA on your phone, or a native
-  desktop app (a thin Tauri shell with OS window vibrancy).
+- **Everywhere** — any browser, a phone (with a dedicated mobile layout), or a
+  native desktop app (a thin Tauri shell with OS window vibrancy).
 
 ## The desktop app
 
@@ -110,7 +124,7 @@ The browser UI is the full product — the desktop app wraps the same server and
 adds the native touches: a vibrancy window that blurs what's behind it, a
 menu-bar tray with each agent's live status, and a **background server** —
 closing the window keeps your agents running; the tray's Quit is the real
-off-switch. If you also installed the server CLI (Homebrew / install script),
+off-switch. If you also installed the server CLI (Homebrew / npm / install script),
 `clidable open .` opens that folder — in the app on macOS, in the browser
 elsewhere.
 
@@ -153,11 +167,11 @@ and the full security model.
 
 ## The CLI
 
-The same binary is the command-line surface. Homebrew and the install script
-put it on PATH as `clidable`; on Windows the downloaded `.exe` itself is the
-command (rename it to `clidable.exe` if you like). The `clidable-server`
-spelling survives only as the download-artifact filename (and, inside the
-desktop app, the bundled server binary):
+The same binary is the command-line surface. Homebrew, npm, and the install
+script put it on PATH as `clidable`; on Windows the downloaded `.exe` itself
+is the command (rename it to `clidable.exe` if you like). The
+`clidable-server` spelling survives only as the download-artifact filename
+(and, inside the desktop app, the bundled server binary):
 
 ```sh
 clidable open .          # open this folder in Clidable (app or browser)
@@ -189,11 +203,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and
 
 ## Project status
 
-Pre-1.0, core experience working: terminals + composer, durable sessions,
+Pre-1.0, core experience shipping: terminals + composer, durable sessions,
 checkpoints, editor + diffs, projects + auto-launched preview,
-skills/MCP/plugins/instructions managers, AI-team delegation, Windows support.
-On the roadmap: signed desktop bundles, checkpoint retention, mobile polish.
-See [PLAN.md](PLAN.md).
+skills/MCP/plugins/instructions managers, AI-team delegation, desktop app for
+macOS/Windows/Linux. On the roadmap: checkpoint retention, mobile polish. See
+[PLAN.md](PLAN.md).
 
 ## License
 

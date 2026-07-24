@@ -9,18 +9,17 @@ Clidable ships a CLI: `clidable <command> …`. It's the same code that powers t
 **Outside Clidable**, any of these are equivalent:
 
 ```bash
-# The installed command (Homebrew / install script put it on PATH):
+# The installed command (Homebrew / npm / install script put it on PATH):
 clidable skills list
 
 # Via the shim Clidable writes on startup (path varies by OS — see Configuration):
 ~/Library/Application\ Support/Clidable/bin/clidable skills list     # macOS
 
-# From the source tree:
+# From a source checkout:
 bun server/index.ts skills list
-
-# With the compiled binary:
-./dist/clidable-server skills list
 ```
+
+`clidable --help` prints the full usage; an unknown command errors instead of silently starting the server.
 
 The server binary doubles as the CLI: if the first recognized token is a subcommand (`open`, `stop`, `skills`, `mcp`, `plugins`, `instructions`, `team`), it runs that and exits instead of starting the server.
 
