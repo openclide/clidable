@@ -19,8 +19,45 @@ import { devServerStatus, startDevServer, stopDevServer } from "./dev-server";
 import { writeLaunchConfig } from "./launch-config";
 import { detectProject } from "./detect";
 
-const cleanup: Array<() => void> = [];
-afterAll(() => cleanup.forEach((fn) => fn()));
+const cleanup: Array<() => unknown> = [];
+
+/**
+ * Teardown is LIFO, awaited, and never fatal — all three matter, and all three
+ * were once wrong here in a way only Windows noticed:
+ *
+ *  - **LIFO.** A helper registers "remove this dir" when it creates the dir,
+ *    and the test registers "stop the dev server" later. In insertion order the
+ *    directory removal ran while the server still had it as its cwd — which
+ *    POSIX permits and Windows refuses (`EBUSY`).
+ *  - **Awaited + caught.** These used to be `() => void rm(...)`, so a rejected
+ *    removal became an unhandled rejection: bun printed "Unhandled error
+ *    between tests" and exited 1 with `0 fail`, i.e. a red suite with no
+ *    failing assertion to point at.
+ *  - **Never fatal.** A scratch dir we couldn't unlink is for the OS temp
+ *    sweeper to deal with, not a reason to fail the run.
+ */
+afterAll(async () => {
+  for (const fn of [...cleanup].reverse()) {
+    try {
+      await fn();
+    } catch {
+      // best-effort teardown
+    }
+  }
+});
+
+/** Remove a scratch dir, retrying while Windows releases handles a dying
+ *  child still holds. Gives up quietly rather than failing the suite. */
+async function rmTemp(dir: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      await Bun.sleep(50);
+    }
+  }
+}
 
 /** A project dir pinned to `port` via .clidable/launch.json, and no dev script —
  *  so a non-adopting run fails loudly instead of spawning anything. */
@@ -28,7 +65,7 @@ async function project(port: number): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "clidable-adopt-"));
   await mkdir(join(dir, ".clidable"), { recursive: true });
   await writeFile(join(dir, ".clidable/launch.json"), JSON.stringify({ port }));
-  cleanup.push(() => void rm(dir, { recursive: true, force: true }));
+  cleanup.push(() => rmTemp(dir));
   return dir;
 }
 
@@ -38,7 +75,10 @@ async function serveFrom(cwd: string, port: number): Promise<void> {
     ["bun", "-e", `Bun.serve({port:${port},fetch:()=>new Response("ok")})`],
     { cwd, stdout: "ignore", stderr: "ignore" },
   );
-  cleanup.push(() => proc.kill());
+  cleanup.push(async () => {
+    proc.kill();
+    await proc.exited; // release the cwd handle before any rm below
+  });
   for (let i = 0; i < 50; i++) {
     try {
       await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(200) });
@@ -83,7 +123,7 @@ posixOnly("does not adopt a port held from outside the project", async () => {
   const port = await freePort();
   const dir = await project(port);
   const other = await mkdtemp(join(tmpdir(), "clidable-other-"));
-  cleanup.push(() => void rm(other, { recursive: true, force: true }));
+  cleanup.push(() => rmTemp(other));
   await serveFrom(other, port);
 
   // No adoption → falls through to a normal start, which has nothing to run.
@@ -101,7 +141,7 @@ posixOnly("does not adopt a port held from outside the project", async () => {
 describe("devServerStatus.launchable", () => {
   test("true from a configured command even when the framework has no plan", async () => {
     const dir = await mkdtemp(join(tmpdir(), "clidable-launchable-"));
-    cleanup.push(() => void rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => rmTemp(dir));
     await writeLaunchConfig(dir, { command: "bun run web", port: 8081 });
 
     // A bare directory detects as "unknown", so detection alone would say no —
@@ -111,7 +151,7 @@ describe("devServerStatus.launchable", () => {
 
   test("false when there is neither a config nor a detectable dev script", async () => {
     const dir = await mkdtemp(join(tmpdir(), "clidable-launchable-"));
-    cleanup.push(() => void rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => rmTemp(dir));
     expect((await devServerStatus(dir)).launchable).toBe(false);
   });
 });
@@ -131,7 +171,7 @@ describe("two projects of one framework", () => {
   /** A project whose `web` script serves a body identifying itself. */
   async function expoish(body: string): Promise<string> {
     const dir = await mkdtemp(join(tmpdir(), "clidable-multi-"));
-    cleanup.push(() => void rm(dir, { recursive: true, force: true }));
+    cleanup.push(() => rmTemp(dir));
     await writeFile(
       join(dir, "package.json"),
       JSON.stringify({
@@ -158,8 +198,8 @@ describe("two projects of one framework", () => {
 
     const ra = await startDevServer(a, fa.framework);
     const rb = await startDevServer(b, fb.framework);
-    cleanup.push(() => void stopDevServer(a));
-    cleanup.push(() => void stopDevServer(b));
+    cleanup.push(() => stopDevServer(a));
+    cleanup.push(() => stopDevServer(b));
 
     expect(ra.port).not.toBe(rb.port); // the actual regression
 
