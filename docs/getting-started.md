@@ -56,20 +56,26 @@ Checkpoints, project scaffolding, and the diff viewer all use your system `git`.
 
 Clidable is a GUI *for* CLI agents — install whichever ones you use:
 
-| Agent | Install |
-|---|---|
-| **Claude Code** | `npm i -g @anthropic-ai/claude-code` |
-| **Codex CLI** | `npm i -g @openai/codex` |
-| **Antigravity CLI** | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` (Windows: `irm https://antigravity.google/cli/install.ps1 \| iex`) |
-| **Cursor** | Install Cursor and enable the `cursor-agent` CLI |
-| **Qwen Code** | `npm i -g @qwen-code/qwen-code` |
-| **Kimi CLI** | See Moonshot AI's docs |
-| **OpenCode** | `npm i -g opencode` |
-| **GitHub Copilot** | `npm i -g @github/copilot` |
+| Agent | Command | Install docs |
+|---|---|---|
+| **Claude Code** | `claude` | [code.claude.com/docs/en/setup](https://code.claude.com/docs/en/setup) |
+| **Codex CLI** | `codex` | [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli/) |
+| **Antigravity CLI** | `agy` | [antigravity.google/docs/cli/install](https://antigravity.google/docs/cli/install) |
+| **Cursor Agent** | `cursor-agent` | [cursor.com/docs/cli/installation](https://cursor.com/docs/cli/installation) |
+| **Qwen Code** | `qwen` | [github.com/QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) |
+| **Kimi CLI** | `kimi` | [moonshotai.github.io/kimi-cli](https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html) |
+| **OpenCode** | `opencode` | [opencode.ai/docs](https://opencode.ai/docs/) |
+| **GitHub Copilot** | `copilot` | [docs.github.com — install Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli) |
+
+We link rather than reprint commands: agent install methods change fast (most
+of these have already moved off npm to their own self-updating installers,
+and Kimi installs with [`uv`](https://docs.astral.sh/uv/)), and the vendor's
+page is always right. Clidable shows the same link in-app when an agent isn't
+on your PATH.
 
 > **Log in first.** Each agent manages its own authentication. Run the agent once in a plain terminal (e.g. `claude`, then `/login`) before using it in Clidable — Clidable never handles your API keys or credentials; the agents do, exactly as they would standalone.
 
-On the welcome screen, agents that aren't found on your `PATH` appear dimmed with an amber dot — hover for the install hint.
+On the welcome screen, agents that aren't found on your `PATH` appear dimmed with an amber dot. Pick one anyway and the workspace shows a link to its install docs. Install it, come back to the window, and it goes live — no restart needed.
 
 ### Bun (only for some features)
 

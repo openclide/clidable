@@ -1,12 +1,13 @@
 /**
  * GET /api/agents — install-status probe for every known agent.
  *
- * Detection is cached per process (see `agents.detectAgent`), so this
- * handler is cheap to call repeatedly. The welcome screen calls it once
- * on mount to dim agents that aren't installed and surface an install
- * hint before the user tries to launch one.
+ * Successful detections are cached per process (see `agents.resolveBin`);
+ * misses are re-probed, so an agent installed after startup shows up on the
+ * next call. The welcome screen calls this on mount to dim agents that aren't
+ * installed before the user tries to launch one.
  */
 import { AGENTS, detectAgent } from "../agents";
+import { AGENT_INSTALL_DOCS } from "../../shared/types";
 import type {
   AgentInstallStatus,
   AgentsStatusResponse,
@@ -24,7 +25,7 @@ export async function agentsHandler(): Promise<Response> {
         name: spec.name,
         installed: binPath !== null,
         binPath,
-        installHint: spec.installHint,
+        installUrl: AGENT_INSTALL_DOCS[id],
       };
     }),
   );

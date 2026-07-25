@@ -23,7 +23,7 @@ Only matters if you run from source, use the new-project templates (scaffolding 
 ## Agents
 
 **An agent is dimmed on the welcome screen**
-Its binary isn't on the server's PATH. Hover the icon for the install command (e.g. `npm i -g @anthropic-ai/claude-code`). If you installed it but it's still dimmed, the *server process* can't see it — restart Clidable from a shell where `which claude` works. For systemd, set the `PATH` in the unit file (see the [VPS guide](./remote-vps.md#step-3--keep-it-running-systemd)).
+Its binary isn't on the server's PATH. Hover the icon for a link to that agent's install docs (also listed in the [supported-agents table](./configuration.md#supported-agents)). If you installed it but it's still dimmed, the *server process* can't see it — restart Clidable from a shell where `which claude` works. For systemd, set the `PATH` in the unit file (see the [VPS guide](./remote-vps.md#step-3--keep-it-running-systemd)).
 
 **The agent starts but asks me to log in**
 Expected — agents own their auth. Complete the login once inside the Clidable terminal (it's a real terminal; the flow works), or run the agent once in any terminal on the same machine/user.
@@ -68,7 +68,7 @@ No — they live in a shadow repo in Clidable's data directory, not in your proj
 The dev server isn't up (or is on another port). Use the Run dot for supported frameworks, or start it in the terminal and pick it from the **Detected** list in the ports menu (▾).
 
 **The Run dot fails or does nothing for my project**
-The managed dev server covers Vite / SvelteKit / Astro / Expo / Next / Nuxt / Remix / Hono / Node projects with a matching `package.json` script, run with your project's own package manager (no lockfile → Bun, which then needs to be installed). On Windows, the frameworks that take their port via `PORT` (Next, Nuxt, Remix, Hono, Node) don't currently start from the Run dot — run them in a terminal, or set a custom command. When a start fails you get a banner saying why, with a shortcut to **Configure dev server…** — set the exact command, port, or preview URL there (saved to `.clidable/launch.json`, see [Configuration](./configuration.md#per-project-dev-server-config-clidablelaunchjson)). Anything else (Python, Rust, Go, …): configure a command, or start the server in a terminal and detection takes over.
+The managed dev server covers Vite / SvelteKit / Astro / Expo / Next / Nuxt / Remix / Hono / Node projects with a matching `package.json` script, run with your project's own package manager (no lockfile → Bun, which then needs to be installed). When a start fails you get a banner saying why, with a shortcut to **Configure dev server…** — set the exact command, port, or preview URL there (saved to `.clidable/launch.json`, see [Configuration](./configuration.md#per-project-dev-server-config-clidablelaunchjson)). Anything else (Python, Rust, Go, …): configure a command, or start the server in a terminal and detection takes over.
 
 **Preview is blank for an external website**
 Most public sites send `X-Frame-Options`/CSP that forbids embedding — Clidable shows a warning when it suspects this. Use the open-externally button instead.

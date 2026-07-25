@@ -4,9 +4,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { AGENTS, getAgent, type AgentId } from "../welcome/data";
+import { getAgent, type AgentId } from "../welcome/data";
 import { terminalClient } from "../../lib/terminal-client";
-import type { TerminalAgentId } from "@shared/types";
+import { ExternalLink } from "../ui/ExternalLink";
+import { AGENT_INSTALL_DOCS, type TerminalAgentId } from "@shared/types";
 
 interface Props {
   sessionId: string;
@@ -176,6 +177,16 @@ function Overlay({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Matches the surrounding error card rather than the default pill. */
+const INSTALL_LINK = `
+  mt-3 inline-flex items-center gap-1.5 rounded-lg
+  border border-white/[0.08] bg-white/[0.02]
+  px-3 py-2 text-[11.5px] text-foreground/85
+  transition-[background-color,border-color] duration-150
+  hover:border-white/[0.2] hover:text-foreground
+  focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30
+`;
+
 function ErrorBox({
   code,
   message,
@@ -185,10 +196,12 @@ function ErrorBox({
   message: string;
   agent: ReturnType<typeof getAgent>;
 }) {
-  const spec = AGENTS.find((a) => a.id === agent.id);
-  const installHint =
+  // Read straight from the shared registry rather than the /api/agents
+  // payload: the URL is a static constant either way, and a local read still
+  // works when the very failure being reported is the server going away.
+  const installUrl =
     code === "AGENT_NOT_FOUND"
-      ? installHintFor(agent.id as TerminalAgentId)
+      ? AGENT_INSTALL_DOCS[agent.id as TerminalAgentId]
       : null;
   return (
     <div
@@ -200,23 +213,18 @@ function ErrorBox({
       <div className="mb-1.5 flex items-center gap-2">
         <span
           className="size-2 shrink-0 rounded-full"
-          style={{ background: spec?.color }}
+          style={{ background: agent.color }}
           aria-hidden
         />
         <span className="font-medium tracking-tight text-foreground">
-          {spec?.name ?? agent.id} — couldn't start
+          {agent.name} — couldn't start
         </span>
       </div>
       <p className="text-foreground/65">{message}</p>
-      {installHint && (
-        <pre className="
-          mt-3 rounded-lg
-          border border-white/[0.08] bg-white/[0.02]
-          px-3 py-2 font-mono text-[11.5px]
-          text-foreground/85 select-all
-        ">
-          {installHint}
-        </pre>
+      {installUrl && (
+        <ExternalLink href={installUrl} className={INSTALL_LINK}>
+          Install {agent.name}
+        </ExternalLink>
       )}
     </div>
   );
@@ -235,31 +243,3 @@ function ExitedBox({ code }: { code: number }) {
   );
 }
 
-/**
- * Mirror of the server-side `AGENTS` registry. Kept tiny + duplicated
- * (rather than importing the server module) so frontend bundles don't
- * pull in Bun-only code.
- */
-function installHintFor(id: TerminalAgentId): string {
-  switch (id) {
-    case "claude":
-      return "npm i -g @anthropic-ai/claude-code";
-    case "codex":
-      return "npm i -g @openai/codex";
-    case "antigravity":
-      return "curl -fsSL https://antigravity.google/cli/install.sh | bash";
-    case "cursor":
-      return "Install Cursor and enable the `cursor-agent` CLI.";
-    case "qwen":
-      return "npm i -g @qwen-code/qwen-code";
-    case "kimi":
-      return "Install the Kimi CLI from Moonshot AI's docs.";
-    case "opencode":
-      return "npm i -g opencode";
-    case "copilot":
-      return "npm i -g @github/copilot";
-    case "terminal":
-      // Always installed (your login shell) — this hint is never shown.
-      return "Uses your login shell ($SHELL).";
-  }
-}

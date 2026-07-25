@@ -10,10 +10,10 @@ interface Props {
  * Horizontal row of agent icons on the welcome screen.
  * Clicking one opens the project picker for that agent.
  *
- * Agents that aren't installed on PATH are dimmed and show their install
- * hint as a tooltip. They're still clickable — the workspace's
- * AGENT_NOT_FOUND error box still appears and points to the same hint —
- * but the visual cue surfaces the constraint upfront.
+ * Agents that aren't installed on PATH are dimmed, with a tooltip saying so.
+ * They're still clickable — picking one opens the workspace, whose
+ * AGENT_NOT_FOUND error box carries a clickable link to that agent's install
+ * docs — but the visual cue surfaces the constraint upfront.
  */
 export function AgentRow({ onPick }: Props) {
   const status = useAgentStatus();
@@ -25,8 +25,11 @@ export function AgentRow({ onPick }: Props) {
         // `undefined` while loading → render as installed (neutral) so
         // we don't flash "missing" before the response lands.
         const isMissing = installStatus?.installed === false;
+        // Deliberately NOT the install URL: a tooltip can't be clicked or
+        // copied, and these URLs run to 90 characters. Pick it anyway and the
+        // workspace's error box shows a real link.
         const tooltip = isMissing
-          ? `${agent.name} isn't on PATH. Install: ${installStatus?.installHint ?? ""}`
+          ? `${agent.name} isn't on PATH — pick it for install instructions`
           : `Start with ${agent.name}`;
         return (
           <button

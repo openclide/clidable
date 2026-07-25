@@ -39,6 +39,14 @@ Path aliases: `@/*` → `web/src`, `@server/*`, `@shared/*`.
 - **Bun resolves `import "bun"` to the runtime**, not the npm package — but the npm package being present + unhealed is still a startup blocker.
 - **Flag placement**: `bun --hot server/index.ts` ✓ not `bun server/index.ts --hot` ✗.
 - **`.env*` auto-loaded** by Bun.
+- **`Bun.which(bin)` snapshots PATH at process start** and ignores later
+  `process.env.PATH` mutation; only the explicit `Bun.which(bin, { PATH })`
+  option re-reads it. That makes a bare call both untestable (a test can't
+  point it at a temp dir) and subtly wrong — it can't see a PATH entry added
+  since boot. `resolveBin` in [server/agents.ts](server/agents.ts) passes PATH
+  explicitly for exactly this reason. Related: agent detection caches only
+  *successes*, never misses, so installing an agent while the server runs is
+  picked up on the next launch instead of needing a restart.
 - **The `bun build` CLI never loads bunfig plugins.** `[serve.static].plugins`
   (bun-plugin-tailwind) applies only to the dev server's HTML bundling — a CLI
   production build ships raw `@theme`/`@utility`/`@tailwind` directives and zero

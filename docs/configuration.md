@@ -114,18 +114,20 @@ Rules worth knowing:
 
 ## Supported agents
 
-| Agent | Binary on PATH | Install | Notes |
+| Agent | Binary on PATH | Install docs | Notes |
 |---|---|---|---|
-| Claude Code | `claude` | `npm i -g @anthropic-ai/claude-code` | Plugin-sync env enabled automatically |
-| Codex CLI | `codex` | `npm i -g @openai/codex` | |
-| Antigravity CLI | `agy` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | Windows: `irm https://antigravity.google/cli/install.ps1 \| iex` |
-| Cursor | `cursor-agent` | Install Cursor; enable the CLI | |
-| Qwen Code | `qwen` | `npm i -g @qwen-code/qwen-code` | |
-| Kimi CLI | `kimi` | Moonshot AI docs | |
-| OpenCode | `opencode` | `npm i -g opencode` | |
-| GitHub Copilot | `copilot` | `npm i -g @github/copilot` | No read-only mode for AI-team delegation |
+| Claude Code | `claude` | [setup](https://code.claude.com/docs/en/setup) | Plugin-sync env enabled automatically |
+| Codex CLI | `codex` | [codex/cli](https://developers.openai.com/codex/cli/) | |
+| Antigravity CLI | `agy` | [cli/install](https://antigravity.google/docs/cli/install) | Windows install differs — the linked page covers it |
+| Cursor Agent | `cursor-agent` | [cli/installation](https://cursor.com/docs/cli/installation) | |
+| Qwen Code | `qwen` | [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) | |
+| Kimi CLI | `kimi` | [getting started](https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html) | A Python tool, installed with `uv` |
+| OpenCode | `opencode` | [opencode.ai/docs](https://opencode.ai/docs/) | |
+| GitHub Copilot | `copilot` | [install Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli) | No read-only mode for AI-team delegation |
 
-Detection is by `which <binary>` — the agent must be on the PATH of the *server* process. Each agent handles its own login/credentials (`~/.claude`, `~/.codex`, …); Clidable stores no API keys.
+Every linked page covers all platforms, which is the other reason Clidable links rather than prints a command: install steps differ per OS and change often. The links live in exactly one place, `AGENT_INSTALL_DOCS` in `shared/types.ts`, which both the server and the UI read.
+
+Detection is by PATH lookup — the agent must be on the PATH of the *server* process. Successful lookups are cached for the server's lifetime; misses are re-probed, so an agent you install while Clidable is running is picked up on the next launch (returning to the window refreshes the welcome screen). Each agent handles its own login/credentials (`~/.claude`, `~/.codex`, …); Clidable stores no API keys.
 
 Terminals are spawned with the agent launched directly (not a wrapper shell), with `TERM=xterm-256color`, `COLORTERM=truecolor`, your full environment, and Clidable's `bin/` prepended to PATH so the `clidable` CLI resolves inside.
 
@@ -135,7 +137,7 @@ Terminals are spawned with the agent launched directly (not a wrapper shell), wi
 
 **Detection** (opening an existing project): Next.js, Remix, Expo, SvelteKit, Nuxt, Astro, Vite, Hono, generic Node (from `package.json`); Rust (`Cargo.toml`); Python (`pyproject.toml` / `requirements.txt` / `manage.py`); Go (`go.mod`).
 
-**Managed dev server** (the Run dot in the preview address bar): supported for Vite, SvelteKit, Astro, Expo (port passed as `--port`) and Next.js, Nuxt, Remix, Hono, Node (port passed as `PORT` env), run with your project's own package manager (bun / pnpm / yarn / npm, detected from the lockfile; Bun assumed when there's none). A free port is picked starting from the framework's default (Vite 5173, Next 3000, Astro 4321, Expo 8081, …). On Windows, the `PORT`-env family doesn't currently launch from the Run dot (the injected env prefix is POSIX syntax) — start those from a terminal, or set a custom command. Everything is overridable per project — see [`.clidable/launch.json`](#per-project-dev-server-config-clidablelaunchjson). Other stacks: set a command there, or run your dev server in the terminal; the preview auto-detects it.
+**Managed dev server** (the Run dot in the preview address bar): supported for Vite, SvelteKit, Astro, Expo (port passed as `--port`) and Next.js, Nuxt, Remix, Hono, Node (port passed as `PORT` env), run with your project's own package manager (bun / pnpm / yarn / npm, detected from the lockfile; Bun assumed when there's none). A free port is picked starting from the framework's default (Vite 5173, Next 3000, Astro 4321, Expo 8081, …). Everything is overridable per project — see [`.clidable/launch.json`](#per-project-dev-server-config-clidablelaunchjson). Other stacks: set a command there, or run your dev server in the terminal; the preview auto-detects it.
 
 ## Network behavior
 

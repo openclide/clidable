@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { isAbsolute } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, isAbsolute, join } from "node:path";
 import { AGENTS, resolveBin } from "./agents";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -34,5 +36,31 @@ describe("resolveBin", () => {
     const resolved = await resolveBin(AGENTS.terminal.bin);
     expect(resolved).not.toBeNull();
     expect(isAbsolute(resolved!)).toBe(true);
+  });
+
+  it("re-probes a miss, so an agent installed later is found", async () => {
+    // The whole install flow depends on this: the UI hands the user their
+    // agent's install docs, and caching the "not installed" answer for the
+    // process lifetime meant they came back to the same error until the server
+    // was restarted. Only successes may be cached.
+    const dir = mkdtempSync(join(tmpdir(), "clidable-resolvebin-"));
+    const name = "clidable-test-agent-appears-later";
+    const bin = join(dir, IS_WINDOWS ? `${name}.cmd` : name);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ""}`;
+    try {
+      expect(await resolveBin(name)).toBeNull(); // not there yet
+
+      writeFileSync(bin, IS_WINDOWS ? "@echo off\r\n" : "#!/bin/sh\n", {
+        mode: 0o755,
+      });
+
+      const resolved = await resolveBin(name); // …now it is
+      expect(resolved).not.toBeNull();
+      expect(isAbsolute(resolved!)).toBe(true);
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

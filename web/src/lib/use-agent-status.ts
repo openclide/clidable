@@ -7,9 +7,12 @@ import type { AgentId } from "../components/welcome/data";
 
 /**
  * Module-level cache + in-flight promise so the welcome-screen mount and
- * any other consumer share one fetch per page load. The detection
- * upstream is cached for the lifetime of the server process, so refetch
- * pressure is low — but a singleton still saves the round-trip.
+ * any other consumer share one fetch per page load.
+ *
+ * The cache is dropped when the window regains focus, because that is exactly
+ * the moment a user comes back from installing an agent elsewhere — the server
+ * re-probes misses (see server/agents.ts resolveBin), so a refetch is what
+ * turns a dimmed tile live without restarting anything.
  */
 let cache: Map<AgentId, AgentInstallStatus> | null = null;
 let inflight: Promise<Map<AgentId, AgentInstallStatus>> | null = null;
@@ -43,21 +46,29 @@ export function useAgentStatus(): Map<AgentId, AgentInstallStatus> | null {
     cache,
   );
   useEffect(() => {
-    if (cache) {
-      setMap(cache);
-      return;
-    }
     let cancelled = false;
-    loadAgents()
-      .then((next) => {
-        if (!cancelled) setMap(next);
-      })
-      .catch(() => {
-        // Network error — leave map null so the UI stays neutral rather
-        // than wrongly marking agents as missing.
-      });
+    const load = (): void => {
+      loadAgents()
+        .then((next) => {
+          if (!cancelled) setMap(next);
+        })
+        .catch(() => {
+          // Network error — leave the map as-is so the UI stays neutral
+          // rather than wrongly marking agents as missing.
+        });
+    };
+
+    load();
+
+    // Coming back to the window is the "I just installed it" signal.
+    const onFocus = (): void => {
+      cache = null;
+      load();
+    };
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
   return map;

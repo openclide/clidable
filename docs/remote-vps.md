@@ -34,19 +34,24 @@ curl -fsSL https://raw.githubusercontent.com/openclide/clidable/main/install.sh 
 # …or Homebrew (macOS / Linux):
 brew install openclide/tap/clidable
 
-# …or npm (needs Node — installed with the agents below):
+# …or npm (needs Node — see the next step):
 npm i -g clidable
 ```
 
-Then Node and the agents:
+**Node.** Some agent CLIs still install from npm, so put Node on the box first:
 
 ```bash
-# Node (for the agent CLIs, which install via npm)
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
+```
 
-# The agents you use — log into each one once
-npm i -g @anthropic-ai/claude-code   # then run `claude` and authenticate
-npm i -g @openai/codex               # then run `codex` and authenticate
+**The agents.** Install each one you want by following its own install docs —
+they're linked in the [supported-agents
+table](./configuration.md#supported-agents), and Clidable links them in-app too
+when it can't find a binary on PATH. Then run each once to authenticate:
+
+```bash
+claude      # → /login
+codex       # → sign in
 ```
 
 Try it:

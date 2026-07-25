@@ -39,8 +39,6 @@ export interface AgentSpec {
   args: string[];
   /** Extra env to inject on top of process.env. */
   env: Record<string, string>;
-  /** Install hint shown when the binary isn't on PATH. */
-  installHint: string;
 }
 
 export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
@@ -53,7 +51,6 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
       // Make Claude render its richest output to xterm.js.
       CLAUDE_CODE_SYNC_PLUGIN_INSTALL: "1",
     },
-    installHint: "npm i -g @anthropic-ai/claude-code",
   },
   codex: {
     id: "codex",
@@ -65,7 +62,6 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     // documented "automation that already vets its hook sources" case.
     args: ["--dangerously-bypass-hook-trust"],
     env: {},
-    installHint: "npm i -g @openai/codex",
   },
   antigravity: {
     id: "antigravity",
@@ -73,7 +69,6 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     bin: "agy",
     args: [],
     env: {},
-    installHint: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
   },
   cursor: {
     id: "cursor",
@@ -81,7 +76,6 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     bin: "cursor-agent",
     args: [],
     env: {},
-    installHint: "Install Cursor and enable the `cursor-agent` CLI.",
   },
   qwen: {
     id: "qwen",
@@ -89,7 +83,6 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     bin: "qwen",
     args: [],
     env: {},
-    installHint: "npm i -g @qwen-code/qwen-code",
   },
   kimi: {
     id: "kimi",
@@ -97,7 +90,6 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     bin: "kimi",
     args: [],
     env: {},
-    installHint: "Install the Kimi CLI from Moonshot AI's docs.",
   },
   opencode: {
     id: "opencode",
@@ -105,7 +97,6 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     bin: "opencode",
     args: [],
     env: {},
-    installHint: "npm i -g opencode",
   },
   copilot: {
     id: "copilot",
@@ -113,7 +104,6 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     bin: "copilot",
     args: [],
     env: {},
-    installHint: "npm i -g @github/copilot",
   },
   // A plain terminal — the user's login shell, not an AI agent. `bin` resolves
   // to their real shell (see loginShell). On POSIX that's an absolute path, used
@@ -130,19 +120,26 @@ export const AGENTS: Record<TerminalAgentId, AgentSpec> = {
     bin: loginShell(),
     args: process.platform === "win32" ? [] : ["-l"],
     env: {},
-    installHint: "Uses your login shell.",
   },
 };
 
 // Keyed by bin NAME (not agent id) so custom-agent recipes that name an
-// arbitrary binary share the same cache as the built-ins.
-const detectionCache = new Map<string, string | null>();
+// arbitrary binary share the same cache as the built-ins. Holds resolved paths
+// only — misses are never cached (see resolveBin).
+const detectionCache = new Map<string, string>();
 
 /**
  * Resolve a binary to an absolute path: an absolute/relative path that exists
  * is used directly; otherwise it's looked up on PATH. Returns null if not found.
- * Results are cached for the lifetime of the process. This is the generic
- * resolver custom-agent recipes use (any `bin`), not just the built-ins.
+ * This is the generic resolver custom-agent recipes use (any `bin`), not just
+ * the built-ins.
+ *
+ * Only SUCCESSES are cached. A miss is re-probed every time, because "not
+ * installed" is a state the user actively fixes: the UI hands them their
+ * agent's install docs, and caching the miss for the process lifetime meant
+ * coming back from a successful install to the same "not installed" error until
+ * the whole server was restarted. Re-probing costs one `Bun.which` on a path
+ * that is already failing.
  *
  * Uses `Bun.which` rather than shelling out, which matters on two counts:
  *
@@ -156,7 +153,8 @@ const detectionCache = new Map<string, string | null>();
  *     agent. `Bun.which` searches PATH only (verified: a bare name matching a
  *     file in cwd resolves to null), which is the semantics the callers assume.
  *
- * It also drops a subprocess per lookup.
+ * It also drops a subprocess per lookup. Note the explicit `PATH` option — see
+ * the call site for why a bare `Bun.which(bin)` is not equivalent.
  */
 export async function resolveBin(bin: string): Promise<string | null> {
   if (detectionCache.has(bin)) return detectionCache.get(bin)!;
@@ -168,14 +166,17 @@ export async function resolveBin(bin: string): Promise<string | null> {
     resolved = bin;
   } else {
     try {
-      resolved = Bun.which(bin);
+      // PATH is passed explicitly: bare `Bun.which(bin)` searches the PATH the
+      // process was STARTED with and ignores `process.env.PATH` afterwards, so
+      // it can't see a directory added since boot (and can't be tested).
+      resolved = Bun.which(bin, process.env.PATH ? { PATH: process.env.PATH } : undefined);
     } catch {
       // Never let a lookup failure take down the spawn: "not installed" is the
       // honest answer and the one every caller already handles.
       resolved = null;
     }
   }
-  detectionCache.set(bin, resolved);
+  if (resolved !== null) detectionCache.set(bin, resolved);
   return resolved;
 }
 

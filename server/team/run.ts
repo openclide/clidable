@@ -17,6 +17,7 @@ import { AGENTS, resolveBin } from "../agents";
 import { pathWithClidableBin } from "../cli-shim";
 import { resolveCwd } from "../pty/session";
 import { BUILTIN_RECIPES, buildArgv, extractAnswer } from "./recipes";
+import { AGENT_INSTALL_DOCS } from "../../shared/types";
 import type { AgentRecipe, DelegateAgentId, TerminalAgentId } from "../../shared/types";
 
 /** Refuse delegation nested deeper than this — a fork-bomb backstop for a
@@ -124,12 +125,12 @@ export async function prepareDelegate(
 
   const binPath = await resolveBin(recipe.bin);
   if (!binPath) {
-    // Built-ins carry an install hint; custom agents just report the missing bin.
-    const hint = AGENTS[recipe.id as TerminalAgentId]?.installHint;
+    // Built-ins link their install docs; custom agents just report the missing bin.
+    const url = AGENT_INSTALL_DOCS[recipe.id as TerminalAgentId];
     throw delegateError(
       "AGENT_NOT_FOUND",
       `"${recipe.name}" not found on PATH (looked for "${recipe.bin}").` +
-        (hint ? ` ${hint}` : ""),
+        (url ? ` Install it: ${url}` : ""),
     );
   }
 

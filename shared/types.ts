@@ -57,6 +57,40 @@ export function migrateAgentId(id: string): string {
   return LEGACY_AGENT_ID_ALIASES[id] ?? id;
 }
 
+/**
+ * Where to learn how to install each agent — the vendor's own install page.
+ *
+ * Deliberately a LINK, not a command. Agent install methods churn fast (most
+ * of these have already moved off npm to their own self-updating installers,
+ * and Kimi is a `uv` tool), they differ per platform, and a command baked in
+ * here goes stale silently — the vendor's page never does. It also can't be
+ * wrong in the specific way a copied command can: `npm i -g opencode` sat in
+ * this codebase pointing at a package that 404s (the real one is
+ * `opencode-ai`).
+ *
+ * Lives in `shared/` because both sides read this const directly — the server
+ * reports it with agent detection over /api/agents, and the terminal's
+ * agent-not-found card imports it to render a link. The card deliberately does
+ * NOT take the value off the wire: the failure it's reporting may be the server
+ * itself, and a static constant needs no round-trip to be correct.
+ *
+ * `null` = nothing to install (the plain terminal is your own login shell).
+ */
+export const AGENT_INSTALL_DOCS: Readonly<
+  Record<TerminalAgentId, string | null>
+> = {
+  claude: "https://code.claude.com/docs/en/setup",
+  codex: "https://developers.openai.com/codex/cli/",
+  antigravity: "https://antigravity.google/docs/cli/install",
+  cursor: "https://cursor.com/docs/cli/installation",
+  qwen: "https://github.com/QwenLM/qwen-code",
+  kimi: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+  opencode: "https://opencode.ai/docs/",
+  copilot:
+    "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli",
+  terminal: null,
+};
+
 /** Client → Server (text JSON). */
 export type TerminalClientMessage =
   | {
@@ -136,7 +170,7 @@ export const TERMINAL_FRAME_KIND_OUTPUT = 1;
  *
  * The server probes PATH for each agent's binary at startup (cached). The
  * welcome screen uses this to dim agents that aren't installed and to
- * show an install hint inline instead of failing only when the user
+ * link its install docs inline instead of failing only when the user
  * tries to launch one.
  * ------------------------------------------------------------------------- */
 
@@ -147,8 +181,9 @@ export interface AgentInstallStatus {
   installed: boolean;
   /** Resolved absolute path if installed; null otherwise. */
   binPath: string | null;
-  /** Command / pointer for the user to install this agent. */
-  installHint: string;
+  /** The vendor's install docs (see AGENT_INSTALL_DOCS); null when there's
+   *  nothing to install. */
+  installUrl: string | null;
 }
 
 export interface AgentsStatusResponse {
