@@ -1,0 +1,209 @@
+# Everything that must happen when a GitHub Release is PUBLISHED — i.e. after a
+# human has reviewed the draft. Two jobs:
+#
+#   npm-promote — move the dist-tag to `latest`
+#   tap-pr      — open a PR bumping openclide/homebrew-tap
+#
+# Both are deliberately here rather than in release.yml: they are the steps that
+# make a build visible to everyone running `npm i -g clidable` or `brew upgrade`,
+# so they belong on the far side of the review gate. Both re-derive everything
+# from the PUBLISHED release, so what ships to users can't drift from what was
+# reviewed.
+#
+# release.yml publishes all seven packages under the `staged` dist-tag, never
+# `latest`. That's the whole point: the GitHub Release is created as a draft for
+# a human to review, and an npm publish is irreversible — unpublish is blocked
+# after 72 hours and the version can never be reused. Publishing to `latest`
+# during the build would hand a not-yet-reviewed (possibly rejected) build to
+# everyone running a bare `npm i -g clidable`.
+#
+# Moving a dist-tag, unlike publishing, IS reversible — so the risky half is the
+# half that waits for the human.
+#
+# Pre-releases stop at `next`; only a normal version becomes `latest`.
+name: post-release
+
+on:
+  release:
+    types: [published]
+  # Recovery hatch: re-point the tags for a version that's already published
+  # (e.g. this job failed, or a release was published before it existed).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to promote (no leading v), e.g. 0.1.1
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  npm-promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Move the dist-tag to latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          ver="${INPUT_VERSION:-${RELEASE_TAG#v}}"
+          [ -n "$ver" ] || { echo "::error::no version to promote"; exit 1; }
+
+          # A pre-release goes to `next`, not `latest`.
+          case "$ver" in
+            *-*) dist_tag=next ;;
+            *)   dist_tag=latest ;;
+          esac
+          echo "promoting $ver → $dist_tag"
+
+          # The package list comes from the same table that staged them, so a new
+          # target can't be forgotten here.
+          mapfile -t pkgs < <(bun scripts/npm-package-names.ts)
+          for pkg in "${pkgs[@]}"; do
+            if ! npm view "$pkg@$ver" version >/dev/null 2>&1; then
+              echo "::error::$pkg@$ver is not published — did release.yml's npm job run?"
+              exit 1
+            fi
+          done
+
+          # Only after every package is confirmed present: a half-promoted set
+          # would leave the wrapper pointing at binaries `latest` can't resolve.
+          for pkg in "${pkgs[@]}"; do
+            npm dist-tag add "$pkg@$ver" "$dist_tag"
+          done
+
+          echo "✓ $dist_tag now serves $ver"
+
+  # Bump the tap. The formula and cask pin an exact version + sha256 per asset,
+  # so until this lands `brew upgrade` keeps serving the previous release.
+  #
+  # A PR rather than a direct push: the tap is what every `brew install` resolves
+  # through, so a bad bump is a user-facing outage. The transcription is
+  # automated (that was the error-prone part); the merge stays a human decision.
+  #
+  # Needs a TAP_TOKEN secret — a PAT (or App token) with `contents: write` +
+  # `pull_requests: write` on openclide/homebrew-tap. The workflow's own
+  # GITHUB_TOKEN is scoped to THIS repo and cannot touch the tap. Without the
+  # secret this job doesn't fail the release: it tells you what to paste.
+  tap-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Render the formula + cask from the published assets
+        id: render
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          ver="${INPUT_VERSION:-${RELEASE_TAG#v}}"
+          [ -n "$ver" ] || { echo "::error::no version"; exit 1; }
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+          # Straight from the release the human just published — not from a build
+          # artifact — so the hashes are provably the bytes users download.
+          mkdir -p published
+          gh release download "v$ver" --pattern SHA256SUMS --dir published --clobber
+
+          bun scripts/render-brew-packaging.ts \
+            --sums=published/SHA256SUMS --version="$ver" --out=brew-out
+
+          # The renderer exits 0 without writing for a pre-release (the formula
+          # owns the bare `clidable` name, so it must never point at one).
+          if [ -f brew-out/Formula/clidable.rb ]; then
+            echo "rendered=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rendered=false" >> "$GITHUB_OUTPUT"
+            echo "nothing to bump for $ver (pre-release) — skipping the tap PR" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Open the tap PR
+        if: steps.render.outputs.rendered == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          VER: ${{ steps.render.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            {
+              echo "### Tap bump: no TAP_TOKEN secret"
+              echo ""
+              echo "Add a PAT with contents+pull_requests write on"
+              echo "openclide/homebrew-tap as \`TAP_TOKEN\` to automate this. Until then,"
+              echo "copy the rendered files from the release run's summary."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          export GH_TOKEN="$TAP_TOKEN"
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/openclide/homebrew-tap.git" tap
+          cd tap
+          git config user.name "clidable-release[bot]"
+          git config user.email "noreply@github.com"
+
+          branch="clidable-$VER"
+          git checkout -b "$branch"
+          mkdir -p Formula Casks
+          cp ../brew-out/Formula/clidable.rb Formula/clidable.rb
+          # The cask is absent when a desktop leg failed; bump the formula anyway
+          # rather than block the CLI release on it.
+          if [ -f ../brew-out/Casks/clidable-desktop.rb ]; then
+            cp ../brew-out/Casks/clidable-desktop.rb Casks/clidable-desktop.rb
+          fi
+
+          # Stage FIRST, then compare the index: `git diff` alone ignores
+          # untracked files, so the first-ever Casks/clidable-desktop.rb would
+          # look like "no change" and be silently skipped.
+          git add Formula Casks
+          if git diff --cached --quiet; then
+            echo "tap already at $VER — nothing to do" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git commit -m "clidable $VER"
+          # --force so re-running after a failed attempt updates the branch
+          # instead of dying on a stale remote ref.
+          git push -u --force origin "$branch"
+          # printf, not a multi-line string: an inline heredoc/quoted block would
+          # have to break out of this YAML literal block's indentation.
+          printf '%s\n' \
+            "Automated bump for [v$VER](https://github.com/openclide/clidable/releases/tag/v$VER)." \
+            "" \
+            "Rendered by \`scripts/render-brew-packaging.ts\` from the published release's" \
+            "own SHA256SUMS, so the pinned hashes are the exact bytes users download." \
+            "" \
+            "Merging makes \`brew install openclide/tap/clidable\` and \`brew upgrade\`" \
+            "serve $VER." > /tmp/pr-body.md
+
+          # An open PR for this branch already exists on a re-run; the push above
+          # has already updated it, so just report it rather than failing.
+          url="$(gh pr create --repo openclide/homebrew-tap \
+            --head "$branch" --base main \
+            --title "clidable $VER" --body-file /tmp/pr-body.md 2>/dev/null \
+            || gh pr view "$branch" --repo openclide/homebrew-tap --json url -q .url)"
+          echo "### Tap PR: $url" >> "$GITHUB_STEP_SUMMARY"
