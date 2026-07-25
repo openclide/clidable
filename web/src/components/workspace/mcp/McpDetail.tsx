@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { McpGlyph } from "./McpGlyph";
+import { ViewSource } from "../../ui/ViewSource";
 import { McpConfiguration } from "./McpConfiguration";
 import { McpResourcesList, McpToolsList } from "./McpToolsList";
 import { McpAgentMatrix } from "./McpAgentMatrix";
@@ -92,10 +93,7 @@ export function McpDetail({
           </p>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <SecondaryButton>
-              <ExternalGlyph />
-              View source
-            </SecondaryButton>
+            <ViewSource source={server.source} />
           </div>
         </div>
       </section>
@@ -164,34 +162,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function Divider() {
   return <span aria-hidden className="h-px w-full bg-white/[0.05]" />;
-}
-
-function SecondaryButton({ children }: { children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      className="
-        flex items-center gap-1.5 rounded-lg
-        border border-white/[0.1] bg-white/[0.04]
-        px-3 py-1.5 text-[11.5px] text-foreground/85
-        transition-[background-color,border-color] duration-150
-        hover:border-white/[0.2] hover:bg-white/[0.07] hover:text-foreground
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30
-      "
-    >
-      {children}
-    </button>
-  );
-}
-
-function ExternalGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width={11} height={11} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 3h6v6" />
-      <path d="M10 14l11-11" />
-      <path d="M21 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h5" />
-    </svg>
-  );
 }
 
 

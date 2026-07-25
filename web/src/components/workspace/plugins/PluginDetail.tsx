@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { PluginGlyph } from "./PluginGlyph";
+import { ViewSource } from "../../ui/ViewSource";
 import { PluginComponents } from "./PluginComponents";
 import { SkillFilesList } from "../skills/SkillFilesList";
 import { formatInstalls } from "../skills/data";
@@ -175,30 +176,6 @@ function Divider() {
   return <span aria-hidden className="h-px w-full bg-white/[0.05]" />;
 }
 
-/** "View source" → the plugin's GitHub repo, when `source` is an owner/repo
- *  (Discover entries + marketplace-installed plugins). Otherwise (a marketplace
- *  alias or local path) there's nothing to link to, so render nothing. */
-function ViewSource({ source }: { source: string }) {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(source)) return null;
-  return (
-    <a
-      href={`https://github.com/${source}`}
-      target="_blank"
-      rel="noreferrer"
-      className="
-        flex items-center gap-1.5 rounded-lg
-        border border-white/[0.1] bg-white/[0.04]
-        px-3 py-1.5 text-[11.5px] text-foreground/85
-        transition-[background-color,border-color] duration-150
-        hover:border-white/[0.2] hover:bg-white/[0.07] hover:text-foreground
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30
-      "
-    >
-      <ExternalGlyph />
-      View source
-    </a>
-  );
-}
 
 function ScopePicker({
   value,
@@ -260,16 +237,6 @@ function InstallButton({
     >
       {installing ? "Installing…" : installed ? "Installed" : "Install"}
     </button>
-  );
-}
-
-function ExternalGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width={11} height={11} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 3h6v6" />
-      <path d="M10 14l11-11" />
-      <path d="M21 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h5" />
-    </svg>
   );
 }
 
