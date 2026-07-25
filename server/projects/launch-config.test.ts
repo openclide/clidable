@@ -99,7 +99,14 @@ describe("detectLaunchPlan", () => {
   test("node → env command on 3000", async () => {
     const dir = await project({ "package.json": pkg({ scripts: { dev: "node ." } }), "package-lock.json": "" });
     const plan = await detectLaunchPlan(dir, "node");
-    expect(plan.command).toBe("PORT=3000 npm run dev");
+    // `detectLaunchPlan` builds through buildCommand at the HOST platform, and
+    // the `PORT=` prefix is posix-only — cmd.exe would read it as a program
+    // name, so Windows relies on the shell env instead. Assert the shape this
+    // host actually produces; the prefix itself is pinned by the buildCommand
+    // tests above, in both directions.
+    expect(plan.command).toBe(
+      process.platform === "win32" ? "npm run dev" : "PORT=3000 npm run dev",
+    );
   });
   test("no dev script → not runnable", async () => {
     const plan = await detectLaunchPlan(await project({ "package.json": pkg({ scripts: {} }) }), "node");
