@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { platformManifest, wrapperManifest, TARGETS } from "./build-npm-packages";
 
 /**
@@ -81,10 +82,13 @@ describe("npm wrapper", () => {
  * oversight"). These read the other three and assert they agree.
  */
 describe("the target table is the single source of truth", () => {
-  const root = new URL("..", import.meta.url).pathname;
+  // `import.meta.dir` + join, NOT `new URL(…).pathname`: on Windows the latter
+  // yields "/C:/…", which no filesystem call resolves. (Caught by the windows CI
+  // job, which exists for exactly this.)
+  const repoFile = (rel: string): string => join(import.meta.dir, "..", rel);
 
   test("release.yml cross-compiles exactly the artifacts TARGETS expects", async () => {
-    const yml = await Bun.file(root + ".github/workflows/release.yml").text();
+    const yml = await Bun.file(repoFile(".github/workflows/release.yml")).text();
     // The host binary is built separately (mv … clidable-server-linux-x64); the
     // rest come from the `[bun-target]=artifact` table.
     const inWorkflow = new Set(
@@ -97,7 +101,7 @@ describe("the target table is the single source of truth", () => {
   });
 
   test("install.sh can name every unix artifact TARGETS lists", async () => {
-    const sh = await Bun.file(root + "install.sh").text();
+    const sh = await Bun.file(repoFile("install.sh")).text();
     // install.sh builds `clidable-server-${os_slug}-${arch_slug}`; assert the
     // slug pairs it can produce cover the unix targets (it sends Windows users
     // to the Releases page instead of downloading).
