@@ -102,7 +102,7 @@ function Hero() {
         <div style={enter(0)}>
           <span className="inline-flex items-center gap-2 rounded-full border border-white/[0.1] bg-white/[0.04] px-3 py-1 text-[12px] text-foreground/70">
             <span className="size-1.5 rounded-full bg-[oklch(0.8_0.15_162)] [animation:pulse-soft_1.6s_ease-in-out_infinite]" />
-            <b className="font-semibold text-foreground">v0.1</b> in the works — free &amp; open source
+            <b className="font-semibold text-foreground">v0.1</b> is out — free &amp; open source
           </span>
         </div>
         <h1
@@ -124,7 +124,7 @@ function Hero() {
           <BtnGhost href="/">Open in the browser</BtnGhost>
         </div>
         <p className="mt-5 font-mono text-[12px] text-foreground/40" style={enter(280)}>
-          macOS · Windows · Linux · PWA — no sign-up to start
+          macOS · Windows · Linux · any browser — no sign-up to start
         </p>
       </div>
 
@@ -173,7 +173,7 @@ const FEATURES: Feature[] = [
   { title: "Live preview, right there", body: "Clidable catches your dev-server URL the moment it boots and renders your app beside the terminal. Desktop, tablet and phone viewports.", icon: svg(<><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 9h18" /><circle cx="6" cy="7" r=".6" fill="currentColor" /></>) },
   { title: "Split panes, many agents", body: "Run Claude in one pane and Codex in the next. Tab between sessions, split any pane, and drag work across projects.", icon: svg(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16" /></>) },
   { title: "MCP, skills & plugins", body: "Install once and Clidable projects it into every agent that can use it — with one shared AGENTS.md kept in sync. No editing five config files.", icon: svg(<><path d="M9 7V3M15 7V3" /><path d="M6 7h12v4a6 6 0 01-12 0z" /><path d="M12 17v4" /></>) },
-  { title: "AI Team & remote access", body: "Let a lead agent delegate to specialist roles. It's one port — reach it from your phone or over Tailscale, or install it as a PWA.", icon: svg(<><circle cx="8" cy="8.5" r="2.6" /><path d="M2.5 19a5.5 5.5 0 0111 0" /><path d="M16 6.5a2.6 2.6 0 010 5.2" /><path d="M21.5 19a5.5 5.5 0 00-5-5.5" /></>) },
+  { title: "AI Team & remote access", body: "Let a lead agent delegate to specialist roles. It's one port — reach it from your phone or over Tailscale.", icon: svg(<><circle cx="8" cy="8.5" r="2.6" /><path d="M2.5 19a5.5 5.5 0 0111 0" /><path d="M16 6.5a2.6 2.6 0 010 5.2" /><path d="M21.5 19a5.5 5.5 0 00-5-5.5" /></>) },
 ];
 
 function Features() {
@@ -240,7 +240,7 @@ function HowItWorks() {
 const PLATFORMS = [
   { icon: "🖥️", t: "Native desktop", d: "A ~50-line Tauri shell with real OS window vibrancy. macOS, Windows & Linux." },
   { icon: "🌐", t: "Any browser", d: "One process, one port. Dev is prod. Nothing to configure." },
-  { icon: "📱", t: "PWA on mobile", d: "Install to your home screen and drive your agents from the couch." },
+  { icon: "📱", t: "Built for mobile", d: "A dedicated phone layout — drive your agents from the couch." },
 ];
 
 function Platforms() {
@@ -313,9 +313,11 @@ function OpenSource() {
             <span className="ml-1 font-mono text-[11px] text-foreground/45">install</span>
           </div>
           <div className="surface rounded-xl px-4 py-4 font-mono text-[12.5px] leading-loose">
-            <div className="text-foreground/40"># run from source today</div>
-            <div><span className="text-accent">$</span> git clone {GITHUB.replace("https://", "")}</div>
-            <div><span className="text-accent">$</span> cd clidable &amp;&amp; bun install &amp;&amp; bun run dev</div>
+            <div className="text-foreground/40"># the desktop app carries its own server</div>
+            <div><span className="text-accent">$</span> brew install --cask openclide/tap/clidable-desktop</div>
+            <div className="mt-2 text-foreground/40"># …or just the server + CLI</div>
+            <div><span className="text-accent">$</span> brew install openclide/tap/clidable</div>
+            <div><span className="text-accent">$</span> clidable</div>
             <div className="text-foreground/45">&nbsp;&nbsp;↳ serving on localhost:7878</div>
           </div>
         </div>

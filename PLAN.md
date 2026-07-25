@@ -15,7 +15,7 @@ Concrete plan of action for each requirement in [IDEA.md](./IDEA.md). Grounded i
 
 ---
 
-## 1. Textbox input instead of terminal input
+## 1. Textbox input instead of terminal input  — ✅ shipped
 
 **Decision**: CodeMirror 6 composer as primary input; xterm.js pane stays interactive as secondary.
 
@@ -63,11 +63,11 @@ Shipped in milestones M1–M5 plus a file-watcher and cross-pane wiring:
 
 **Deferred — M6 retention** (the only remaining piece of §2): prune to "last 100 or 30 days, whichever larger" + `git gc` per shadow repo, on a startup + interval schedule. Nothing breaks without it; it only bounds growth over weeks of use. Open design fork to settle when picked up: whether to rewrite shadow history so pruned commits become `gc`-reclaimable (correct, fiddly) vs. SQLite-prune + `gc --auto` only (simple, keeps git history). Guards needed: never prune the initial checkpoint or one currently used as a diff base; run under the per-project lock.
 
-**Also deferred** (not blockers): OSC 133 prompt-detection trigger (composer Send is wired; direct-terminal users not yet); per-checkpoint preview screenshots (blocked on §3 preview iframe — `screenshot` column + UI thumbnail slot already in place); disabling Claude's native `/rewind`.
+**Also deferred** (not blockers): OSC 133 prompt-detection trigger (composer Send is wired; direct-terminal users not yet); ~~per-checkpoint preview screenshots~~ (shipped with §3 — desktop app captures the preview pane); disabling Claude's native `/rewind`.
 
 ---
 
-## 3. Preview of projects (iframe/webview opens the webserver)
+## 3. Preview of projects (iframe/webview opens the webserver)  — ✅ shipped
 
 **Decision**: Hybrid — claudable-new's dev-server lifecycle + terax-ai's iframe UX/security rigor.
 
@@ -96,7 +96,7 @@ Shipped in milestones M1–M5 plus a file-watcher and cross-pane wiring:
 
 ---
 
-## 4. Easy Plugin / Skill / MCP / Instructions management
+## 4. Easy Plugin / Skill / MCP / Instructions management  — ✅ shipped
 
 **Decision**: One unified "Agent Configuration" surface covering all four artifacts. User-facing CLI is `clidable skills/mcp/plugins/instructions ...`. Underneath: library imports where possible, bundled subprocess where not, direct file ops for instructions.
 
@@ -140,7 +140,7 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 
 ---
 
-## 5. Easy AI team management
+## 5. Easy AI team management  — ✅ shipped
 
 **Decision**: Role-based skill system. Each (role × delegate-agent) pair renders a skill, written into each lead agent's native format.
 
@@ -167,7 +167,7 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 
 ---
 
-## 6. Multi-agent / multi-terminal management
+## 6. Multi-agent / multi-terminal management  — ✅ shipped (splits + durable sessions)
 
 **Decision**: PTY-first. xterm.js renders. Tabs per agent per project. Sessions persist independent of WebSocket lifecycle.
 
@@ -185,7 +185,7 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 - xterm.js + `addon-fit` + `addon-web-links` + `addon-webgl` (perf).
 - TerminalManager: tabs ("Claude (2)", "Codex"), per-project scoping, agent-selector welcome screen.
 - Click into terminal for direct typing; otherwise use CM6 composer.
-- Split panes deferred to v1.1.
+- Split panes shipped (tmux-style, with a minimized dock).
 
 **Inspiration**: claudable-new's [`Terminal.tsx`](../claudable-new/src/components/Terminal.tsx) + [`TerminalManager.tsx`](../claudable-new/src/components/TerminalManager.tsx) for frontend; terax-ai for backend rigor (OSC sequences, WebGL pool, session persistence).
 
@@ -193,7 +193,7 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 
 ---
 
-## 7. Create projects right inside the tool
+## 7. Create projects right inside the tool  — ✅ shipped
 
 **Decision**: "New Project" wizard with framework templates + "Open existing" path.
 
@@ -298,7 +298,7 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 
 ---
 
-## 11. Runs as a desktop app and as a web app on the browser
+## 11. Runs as a desktop app and as a web app on the browser  — ✅ shipped (unsigned bundles)
 
 **Decision**: Tauri 2 wraps the Bun binary on desktop. Same Bun binary serves the web app.
 
@@ -342,11 +342,11 @@ clidable instructions list | edit [target] | sync --from <file> | template apply
 2. ✅ **Terminal pane (#6)** — earliest usable demo: spawn Claude in a PTY, render in xterm.js, compose via CM6 (#1).
 3. ✅ **Code editor + diffs (#8)** — ported terax-ai's editor module (AI-diff deferred; see §8).
 4. ✅ **Checkpoints (#2)** — shadow git repo, trigger on send (retention/M6 deferred; see §2). Added a file watcher for auto-reload along the way.
-5. **Projects (#7) + Preview (#3)** — open/create, dev server, iframe. ← next up; Preview also unblocks checkpoint screenshots.
-6. **Plugin/Skill/MCP management (#4)** — `clidable skills/mcp/plugins` CLI + GUI.
-7. **AI Team (#5)** — role library, delegate recipes, lead serializers.
-8. **Glassmorphism polish (#9)** — design system pass.
-9. **Mobile / PWA (#10)** — responsive, service worker, manifest.
+5. ✅ **Projects (#7) + Preview (#3)** — open/create, dev server (per-project `.clidable/launch.json`), iframe; checkpoint screenshots landed with it.
+6. ✅ **Plugin/Skill/MCP management (#4)** — `clidable skills/mcp/plugins` CLI + GUI.
+7. ✅ **AI Team (#5)** — role library, delegate recipes, lead serializers.
+8. ✅ **Glassmorphism polish (#9)** — design system pass.
+9. **Mobile (#10)** — responsive layout shipped; installable-PWA bits (service worker, manifest) still to do.
 10. ✅ **Localhost-only + access-layer model (#12)** — loopback default, `--allow-lan`, same-site gate shipped; **built-in auth / TLS / multi-user is a non-goal** (delegated to your tunnel/proxy).
 
 Each step ≈ 2–5 days of focused work. Net MVP target: ~6–8 weeks for one dedicated engineer.
@@ -357,6 +357,5 @@ Each step ≈ 2–5 days of focused work. Net MVP target: ~6–8 weeks for one d
 
 - Workflow / pipeline orchestration (rmr-style YAML workflows) — once free-form delegation is proven.
 - MCP bridge for structured event capture from agents — PTY-is-the-UI is the v1 stance; this is an upgrade.
-- Split-pane terminals.
 - Multi-user collaboration on the same project (a shared session behind your access layer — not per-user auth; see §12).
 - Slack/Discord/Telegram mirroring of agent output.
