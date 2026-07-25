@@ -72,3 +72,43 @@ describe("npm wrapper", () => {
     expect(wrapperManifest().private).toBeUndefined();
   });
 });
+
+/**
+ * F12: the artifact-name ↔ platform mapping lives in four places — TARGETS here,
+ * the release workflow's cross-compile table, install.sh's uname mapping, and
+ * the brew renderer. Nothing type-checks them against each other, and the
+ * project has already paid for that once (windows-arm64 was "missing here by
+ * oversight"). These read the other three and assert they agree.
+ */
+describe("the target table is the single source of truth", () => {
+  const root = new URL("..", import.meta.url).pathname;
+
+  test("release.yml cross-compiles exactly the artifacts TARGETS expects", async () => {
+    const yml = await Bun.file(root + ".github/workflows/release.yml").text();
+    // The host binary is built separately (mv … clidable-server-linux-x64); the
+    // rest come from the `[bun-target]=artifact` table.
+    const inWorkflow = new Set(
+      [...yml.matchAll(/\[bun-[\w-]+\]=(clidable-server-[\w.-]+)/g)].map((m) => m[1]!),
+    );
+    for (const m of yml.matchAll(/mv dist\/clidable-server artifacts\/(clidable-server-[\w.-]+)/g)) {
+      inWorkflow.add(m[1]!);
+    }
+    expect([...inWorkflow].sort()).toEqual(TARGETS.map((t) => t.artifact).sort());
+  });
+
+  test("install.sh can name every unix artifact TARGETS lists", async () => {
+    const sh = await Bun.file(root + "install.sh").text();
+    // install.sh builds `clidable-server-${os_slug}-${arch_slug}`; assert the
+    // slug pairs it can produce cover the unix targets (it sends Windows users
+    // to the Releases page instead of downloading).
+    const osSlugs = [...sh.matchAll(/os_slug="(\w+)"/g)].map((m) => m[1]!);
+    const archSlugs = [...sh.matchAll(/arch_slug="(\w+)"/g)].map((m) => m[1]!);
+    const buildable = new Set(
+      osSlugs.flatMap((o) => archSlugs.map((a) => `clidable-server-${o}-${a}`)),
+    );
+    for (const t of TARGETS) {
+      if (t.os === "win32") continue;
+      expect(buildable).toContain(t.artifact);
+    }
+  });
+});

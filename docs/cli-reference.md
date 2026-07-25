@@ -19,7 +19,7 @@ clidable skills list
 bun server/index.ts skills list
 ```
 
-`clidable --help` prints the full usage; an unknown command errors instead of silently starting the server.
+`clidable --version` prints the bare version; `clidable --help` prints the full usage. An unknown command errors instead of silently starting the server.
 
 The server binary doubles as the CLI: if the first recognized token is a subcommand (`open`, `stop`, `skills`, `mcp`, `plugins`, `instructions`, `team`), it runs that and exits instead of starting the server.
 

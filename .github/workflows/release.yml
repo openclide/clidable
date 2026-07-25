@@ -184,13 +184,17 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
-          # A pre-release tag must not become `latest` — npm would serve it to
-          # everyone running a bare `npm i -g clidable`.
-          case "$tag" in
-            *-*) dist_tag=next ;;
-            *)   dist_tag=latest ;;
-          esac
-          echo "publishing with --tag $dist_tag"
+          # NEVER publish straight to `latest`. The GitHub Release is a draft a
+          # human reviews and may reject — but an npm publish is forever
+          # (unpublish is blocked after 72h, and the version can never be
+          # reused). Publishing as `latest` here would serve a rejected build to
+          # every `npm i -g clidable` before anyone looked at it.
+          #
+          # So everything lands on `staged`, and npm-promote.yml moves the
+          # dist-tag to `latest` when the release is actually PUBLISHED. Nobody
+          # gets it from a bare install until then.
+          dist_tag=staged
+          echo "publishing with --tag $dist_tag (promoted to latest on release publish)"
 
           # Idempotent: npm refuses to republish a version, which would fail a
           # re-run after a partial publish (bad token, transient 5xx) and leave
@@ -202,7 +206,13 @@ jobs:
               echo "  = $name@$tag already published, skipping"
               return
             fi
-            npm publish "$dir" --access public --tag "$dist_tag"
+            # `./` is load-bearing: npm-package-arg reads a bare `a/b` as the
+            # GitHub shorthand user/repo, so `npm publish npm-dist/clidable`
+            # tries to git-ls-remote github.com/npm-dist/clidable and dies.
+            # (The scoped dirs happen to parse as paths, which is exactly how
+            # this hid: six packages would publish and the wrapper — the only
+            # one anyone installs — would not.)
+            npm publish "./$dir" --access public --tag "$dist_tag"
           }
 
           for dir in npm-dist/@clidable/*; do publish "$dir"; done
@@ -382,10 +392,17 @@ jobs:
             cat brew-out/Formula/clidable.rb
             echo '```'
             echo ""
-            echo "### Casks/clidable-desktop.rb"
-            echo '```ruby'
-            cat brew-out/Casks/clidable-desktop.rb
-            echo '```'
+            if [ -f brew-out/Casks/clidable-desktop.rb ]; then
+              echo "### Casks/clidable-desktop.rb"
+              echo '```ruby'
+              cat brew-out/Casks/clidable-desktop.rb
+              echo '```'
+            else
+              echo "### Casks/clidable-desktop.rb — NOT RENDERED"
+              echo ""
+              echo "No dmg in this build's SHA256SUMS (a desktop leg failed). Re-run it and"
+              echo "re-run this job before touching the tap."
+            fi
             echo ""
             echo "Naming contract (the README quick start depends on it): the formula is"
             echo 'named `clidable` and installs `… => "clidable"`, owning the bare name on'
@@ -397,6 +414,7 @@ jobs:
       # loudly — otherwise a human publishes a release whose npm channel is
       # missing that version.
       - name: Flag any channel that didn't succeed
+        if: always()
         run: |
           {
             echo ""
@@ -411,7 +429,11 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # always(): a failure in the brew-render step above must not swallow the
+      # release. The draft is what a human reviews; suppressing it is strictly
+      # worse than drafting with a note about what's missing.
       - name: Draft GitHub Release
+        if: always()
         uses: softprops/action-gh-release@v2
         with:
           draft: true

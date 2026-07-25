@@ -11,6 +11,7 @@
  * mode). See PLAN.md §11–§12.
  */
 import { serve, type Server, type WebSocketHandler } from "bun";
+import packageJson from "../package.json" with { type: "json" };
 import homepage from "../web/index.html";
 import landing from "../web/landing.html";
 import { parseConfig } from "./cli";
@@ -151,6 +152,11 @@ import {
   // SERVER (migrations, CLI shim, singleton lock, bind) — the last thing
   // either should do:
   //   * `clidable --help` (or -h / help) — answer with usage instead.
+  //   * `clidable --version` (or -V) — print the version. Without this, an
+  //     unrecognised flag fell through and BOOTED THE SERVER, so the most
+  //     reflexive thing anyone types at a new CLI hung the terminal. It is also
+  //     what the Homebrew formula's `test do` runs to prove the downloaded
+  //     binary actually executes on the machine it landed on.
   //   * a typo'd subcommand (`clidable skils …`) — error + usage, exit 2,
   //     rather than a foreground server silently ignoring the stray word.
   // A bare word that is the VALUE of a value-taking flag (`--port 7878`) is
@@ -160,6 +166,7 @@ import {
     "       clidable open [dir] [--new] [--no-launch] [--print]           open a folder in Clidable",
     "       clidable stop [--force]                                       stop the background server",
     "       clidable skills|mcp|plugins|instructions|team …               agent-toolkit managers",
+    "       clidable --version | --help",
     "",
     "Each command group prints its own usage when run without a verb.",
     "Docs: https://github.com/openclide/clidable/tree/main/docs",
@@ -170,6 +177,13 @@ import {
   const args = Bun.argv.slice(Bun.argv[1] === Bun.main ? 2 : 1);
   if (args.some((a) => a === "-h" || a === "--help" || a === "help")) {
     console.log(USAGE);
+    process.exit(0);
+  }
+  // Bare version string, no prefix: it gets consumed by scripts and by the
+  // formula's `brew test`, and `clidable --version | …` shouldn't need parsing.
+  // `-V`, not `-v`: lowercase reads as verbose to most people.
+  if (args.some((a) => a === "-V" || a === "--version" || a === "version")) {
+    console.log(packageJson.version);
     process.exit(0);
   }
   const VALUE_FLAGS = new Set(["--port", "--bind", "--auth", "--tls"]);

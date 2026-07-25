@@ -15,14 +15,15 @@
  */
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { flag } from "./lib/args";
 
 const root = resolve(import.meta.dir, "..");
-const arg = (n: string): string | undefined =>
-  Bun.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
 
-const version = arg("version") ?? (await Bun.file(resolve(root, "package.json")).json()).version;
-const sumsPath = resolve(root, arg("sums") ?? "dist/SHA256SUMS");
-const outDir = arg("out") ? resolve(root, arg("out")!) : null;
+const version =
+  flag(Bun.argv, "version") ?? (await Bun.file(resolve(root, "package.json")).json()).version;
+const sumsPath = resolve(root, flag(Bun.argv, "sums") ?? "dist/SHA256SUMS");
+const outFlag = flag(Bun.argv, "out");
+const outDir = outFlag ? resolve(root, outFlag) : null;
 
 /** `sha256  filename` (or `sha256  *filename`) → { filename: sha256 } */
 export function parseSums(text: string): Record<string, string> {
@@ -97,6 +98,11 @@ class Clidable < Formula
   test do
     assert_path_exists bin/"clidable"
     assert_predicate bin/"clidable", :executable?
+    # RUN it: existence + the executable bit both pass for a wrong-arch or
+    # truncated download, which is precisely the failure a checksum can't catch
+    # (a re-uploaded asset hashes fine and still won't exec). \`--version\` prints
+    # the bare version and exits 0.
+    assert_equal version.to_s, shell_output("#{bin}/clidable --version").strip
   end
 end
 `;
@@ -131,6 +137,12 @@ cask "clidable-desktop" do
 
   app "Clidable.app"
 
+  # The app's documented behaviour is window-close-hides / tray-Quit-stops, so it
+  # is normally RUNNING. Without this, uninstall deletes Clidable.app out from
+  # under a live process, leaving an orphaned server on :7878 and no tray icon
+  # left to quit it.
+  uninstall quit: "dev.clidable.app"
+
   # Mirrors the env-paths layout the app actually writes (see
   # docs/configuration.md — data, cache and logs are deliberately separate so
   # OS backup tools treat them differently).
@@ -140,6 +152,10 @@ cask "clidable-desktop" do
     "~/Library/Logs/Clidable",
     "~/Library/Preferences/dev.clidable.app.plist",
     "~/Library/Saved Application State/dev.clidable.app.savedState",
+    # Tauri's WKWebView writes both of these; without them \`--zap\` leaves the
+    # webview's storage behind and doesn't actually return the machine to clean.
+    "~/Library/WebKit/dev.clidable.app",
+    "~/Library/HTTPStorages/dev.clidable.app",
   ]
 end
 `;
@@ -147,17 +163,50 @@ end
 
 if (import.meta.main) {
   const sums = parseSums(await Bun.file(sumsPath).text());
+
+  // preflight permits numeric pre-releases (v0.1.0-1). npm routes those to a
+  // `next` dist-tag, but brew has no such concept here: the formula owns the
+  // bare `clidable` name, so committing a pre-release version into it would
+  // serve it to every `brew install`/`brew upgrade`. Render nothing and say so.
+  if (version.includes("-")) {
+    console.error(
+      `refusing to render Homebrew packaging for pre-release version "${version}".\n` +
+        `  Formula/clidable.rb owns the bare \`clidable\` name — a pre-release there\n` +
+        `  reaches everyone on \`brew upgrade\`. Ship pre-releases via npm's \`next\`\n` +
+        `  tag and the GitHub release assets, and bump the tap on a final version.`,
+    );
+    process.exit(0); // not a build failure: the release itself is fine
+  }
+
+  // The formula is required: its four server binaries are what gates the whole
+  // release, so a missing one must fail loudly.
   const formula = renderFormula(version, sums);
-  const cask = renderCask(version, sums);
+
+  // The cask is NOT. A flaked desktop leg leaves no dmg, and the release job is
+  // deliberately built to draft anyway ("one NSIS flake would suppress the
+  // entire release") — so throwing here would abort the job and take the draft,
+  // and the very step that reports the flake, down with it. Warn and skip.
+  let cask: string | null = null;
+  try {
+    cask = renderCask(version, sums);
+  } catch (e) {
+    console.error(
+      `! skipping the cask: ${(e as Error).message}\n` +
+        `  (expected when a desktop leg failed — re-run it, then re-run this job)`,
+    );
+  }
 
   if (outDir) {
     await mkdir(resolve(outDir, "Formula"), { recursive: true });
     await mkdir(resolve(outDir, "Casks"), { recursive: true });
     await Bun.write(resolve(outDir, "Formula/clidable.rb"), formula);
-    await Bun.write(resolve(outDir, "Casks/clidable-desktop.rb"), cask);
-    console.log(`✓ wrote ${outDir}/Formula/clidable.rb and ${outDir}/Casks/clidable-desktop.rb`);
+    console.log(`✓ wrote ${outDir}/Formula/clidable.rb`);
+    if (cask) {
+      await Bun.write(resolve(outDir, "Casks/clidable-desktop.rb"), cask);
+      console.log(`✓ wrote ${outDir}/Casks/clidable-desktop.rb`);
+    }
   } else {
     console.log(`===== Formula/clidable.rb =====\n${formula}`);
-    console.log(`===== Casks/clidable-desktop.rb =====\n${cask}`);
+    if (cask) console.log(`===== Casks/clidable-desktop.rb =====\n${cask}`);
   }
 }

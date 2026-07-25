@@ -98,6 +98,8 @@ source checkout takes the same flags via `bun server/index.ts`, and
 
 ```bash
 clidable [--port 7878] [--bind 127.0.0.1] [--allow-lan] [--dev]
+clidable --version            # bare version, e.g. 0.1.1
+clidable --help
 ```
 
 | Flag | Env var | Default | Meaning |

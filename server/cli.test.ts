@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { parseConfig } from "./cli";
+import packageJson from "../package.json" with { type: "json" };
 
 /** parseConfig reads Bun.argv + process.env. Save/restore both around each
  *  test so cases don't leak into one another. */
@@ -64,5 +65,57 @@ describe("parseConfig — localhost-only default + --allow-lan escape hatch", ()
   test("--auth / --tls are still refused regardless of --allow-lan (no auth by design)", () => {
     withArgs(["--bind", "0.0.0.0", "--allow-lan", "--auth", "token"]);
     expect(() => parseConfig()).toThrow(/no built-in auth\/TLS by design/);
+  });
+});
+
+/**
+ * The argv guard in server/index.ts, exercised through a real process because
+ * that is the only way to observe it: it lives at module scope and calls
+ * process.exit, so it can't be imported and called.
+ *
+ * What makes these worth the spawn cost: every one of these argv shapes used to
+ * fall through and BOOT A SERVER — binding a port, taking the singleton lock,
+ * running migrations — which is the worst possible response to `--version`.
+ */
+describe("CLI entry guard", () => {
+  const run = (args: string[]): { out: string; code: number } => {
+    const p = Bun.spawnSync(["bun", "server/index.ts", ...args], {
+      cwd: import.meta.dir + "/..",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return {
+      out: p.stdout.toString() + p.stderr.toString(),
+      code: p.exitCode ?? -1,
+    };
+  };
+
+  test.each([["--version"], ["-V"], ["version"]])(
+    "%s prints the bare version and exits 0",
+    (flag) => {
+      const { out, code } = run([flag]);
+      expect(code).toBe(0);
+      // Bare, unprefixed: `brew test` and release scripts consume this.
+      expect(out.trim()).toBe(packageJson.version);
+    },
+  );
+
+  test.each([["--help"], ["-h"], ["help"]])("%s prints usage and exits 0", (flag) => {
+    const { out, code } = run([flag]);
+    expect(code).toBe(0);
+    expect(out).toContain("usage: clidable");
+  });
+
+  test("a typo'd subcommand errors with usage and exits 2 (never starts a server)", () => {
+    const { out, code } = run(["skils", "list"]);
+    expect(code).toBe(2);
+    expect(out).toContain('unknown command "skils"');
+  });
+
+  test("a value-taking flag's value is not mistaken for a command", () => {
+    // `--port 9999` must not read "9999" as a subcommand. Uses --print on `open`
+    // so nothing is actually started.
+    const { code } = run(["open", "--print", "--port", "9999"]);
+    expect(code).toBe(0);
   });
 });
