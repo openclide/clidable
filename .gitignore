@@ -24,5 +24,9 @@ Thumbs.db
 # Tauri build artefacts (and src-tauri/.gitignore covers target/ + gen/)
 docs-site/
 
+# Staged publish trees (scripts/build-npm-packages.ts, render-brew-packaging.ts)
+npm-dist/
+brew-out/
+
 # Tauri sidecar binaries (built from the Bun server; see scripts/build-sidecar.ts)
 src-tauri/binaries/

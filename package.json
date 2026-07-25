@@ -15,7 +15,7 @@
     "build": "bun scripts/build.ts",
     "build:compile": "bun scripts/build.ts --compile",
     "start": "cd dist && bun index.js",
-    "test": "bun test server shared web",
+    "test": "bun test server shared web scripts",
     "docs:build": "bun scripts/build-docs-site.ts",
     "docs:serve": "bun scripts/build-docs-site.ts --serve",
     "tauri": "tauri",
