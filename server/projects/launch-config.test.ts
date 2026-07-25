@@ -66,10 +66,24 @@ describe("buildCommand", () => {
     expect(buildCommand("pnpm", "dev", "flag", 5173)).toBe("pnpm dev --port 5173 --host 127.0.0.1");
     expect(buildCommand("yarn", "dev", "flag", 5173)).toBe("yarn dev --port 5173 --host 127.0.0.1");
   });
-  test("env injection", () => {
-    expect(buildCommand("bun", "dev", "env", 3000)).toBe("PORT=3000 bun run dev");
-    expect(buildCommand("npm", "start", "env", 3000)).toBe("PORT=3000 npm run start");
-    expect(buildCommand("pnpm", "dev", "env", 3000)).toBe("PORT=3000 pnpm dev");
+  // `isWindows` is passed explicitly in both directions: these assertions are
+  // about shell syntax, not about the host running the suite (CI runs it on
+  // Windows too).
+  test("env injection uses a POSIX prefix on posix shells", () => {
+    expect(buildCommand("bun", "dev", "env", 3000, false, false)).toBe("PORT=3000 bun run dev");
+    expect(buildCommand("npm", "start", "env", 3000, false, false)).toBe("PORT=3000 npm run start");
+    expect(buildCommand("pnpm", "dev", "env", 3000, false, false)).toBe("PORT=3000 pnpm dev");
+  });
+  test("env injection omits the prefix on Windows (cmd.exe can't parse it)", () => {
+    // cmd.exe reads `PORT=3000 npm run dev` as a program called "PORT=3000";
+    // the port reaches the script through the shell's env instead.
+    expect(buildCommand("bun", "dev", "env", 3000, false, true)).toBe("bun run dev");
+    expect(buildCommand("npm", "start", "env", 3000, false, true)).toBe("npm run start");
+    expect(buildCommand("pnpm", "dev", "env", 3000, false, true)).toBe("pnpm dev");
+    // Flag injection is already shell-agnostic — unchanged on Windows.
+    expect(buildCommand("npm", "dev", "flag", 5173, false, true)).toBe(
+      "npm run dev -- --port 5173 --host 127.0.0.1",
+    );
   });
 });
 

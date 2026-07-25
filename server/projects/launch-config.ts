@@ -157,6 +157,7 @@ export function buildCommand(
   inject: PortInjection,
   port: number,
   noHostFlag = false,
+  isWindows = process.platform === "win32",
 ): string {
   const runner = pm === "bun" ? "bun run" : pm === "npm" ? "npm run" : pm; // pnpm/yarn: `pnpm dev`
   if (inject === "flag") {
@@ -164,6 +165,13 @@ export function buildCommand(
     const sep = pm === "npm" ? " -- " : " ";
     return `${runner} ${script}${sep}${flags}`;
   }
+  // `PORT=x cmd` is POSIX shell syntax. The dev-server shell on Windows is
+  // cmd.exe, which parses that as a program named "PORT=x" and fails with
+  // "'PORT=3000' is not recognized…" — so every env-injected framework (next,
+  // nuxt, remix, hono, node) could never start from the Run button there.
+  // Nothing needs to be prefixed anyway: the shell is spawned with PORT
+  // already in its environment (see dev-server.ts), which the script inherits.
+  if (isWindows) return `${runner} ${script}`;
   return `PORT=${port} ${runner} ${script}`;
 }
 
