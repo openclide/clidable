@@ -81,6 +81,12 @@ The phone can't reach `localhost` *on the server* directly. Clidable normally re
 
 ## Desktop app
 
+**macOS won't open the app: "Apple could not verify Clidable is free of malware"**
+The desktop bundles aren't code-signed yet. Open **System Settings → Privacy & Security**, scroll to the blocked-app notice, and click **Open Anyway** — the right-click → Open override was removed in macOS 15. Or clear the quarantine flag directly: `xattr -cr /Applications/Clidable.app`. This affects the Homebrew cask as well, since Homebrew quarantines casks by default. Signing is on the roadmap; the `clidable` CLI is unaffected.
+
+**Windows SmartScreen says "Windows protected your PC"**
+Same cause — the installer isn't signed yet. Click **More info → Run anyway**.
+
 **I closed the window and the app is "gone" but agents are still running**
 By design — closing the window hides it; the server and your agents keep going. Reopen from the menu-bar tray (**Show Clidable**) or the Dock. **Quit Clidable** in the tray is the real off-switch.
 

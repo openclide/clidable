@@ -39,7 +39,9 @@ or on macOS:
 brew install --cask openclide/tap/clidable-desktop
 ```
 
-The app carries its own server — there is nothing else to install.
+The app carries its own server — there is nothing else to install. It isn't
+code-signed yet, so the first launch needs one click through Gatekeeper /
+SmartScreen — see [Getting Started](docs/getting-started.md#1-install-clidable).
 
 **Prefer the browser?** Run just the server and open
 **http://127.0.0.1:7878** instead:
