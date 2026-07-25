@@ -107,6 +107,25 @@ Tribal knowledge from [`skills-directory/skill-codex`](https://github.com/skills
 ## Architecture decisions (load-bearing)
 
 - **Bun does everything; Tauri is the picture frame.** ~95% of code in Bun, ~50 LOC Rust.
+- **Releasing: CI builds, a laptop publishes.** Tag `v*` → `release.yml` builds
+  the six server binaries, the three-OS desktop matrix, and a **draft** release.
+  Then, after you review and publish that draft, run
+  `bun scripts/publish-release.ts` locally: it downloads that release's own
+  assets, verifies them against SHA256SUMS, publishes the seven npm packages, and
+  opens the Homebrew tap PR. Consequences worth keeping:
+  - **No workflow needs a secret.** `grep secrets. .github/workflows` is empty.
+    npm auth and tap write access are the only credentials CI lacked, and they
+    stay on your machine. The built-in `GITHUB_TOKEN` covers everything else
+    (it cannot reach another repo, which is what the tap bump would have needed).
+  - **The irreversible step is behind the human gate.** An npm publish is
+    permanent — unpublish is blocked after 72h and a version can never be
+    reused — so it must not happen before someone has looked at the artifacts.
+  - **Publish from the DOWNLOADED release, never a local rebuild.** That's what
+    makes the bytes on npm provably the ones CI built and you reviewed.
+  - The desktop matrix is the one part that genuinely cannot be local: WiX
+    (`.msi`) is Windows-only and the Linux gtk/webkit `-sys` crates need real
+    Linux system libs. Server binaries cross-compile from anywhere (verified:
+    `--target=bun-linux-arm64` on macOS yields a real ELF aarch64 binary).
 - **Naming: `clidable` is the COMMAND, `clidable-server` is a FILENAME.**
   Everything users type is `clidable` — the startup shim, what brew /
   install.sh install, and the brew **formula** name (`brew install

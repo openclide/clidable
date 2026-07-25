@@ -29,11 +29,13 @@
 # `xattr -cr /Applications/Clidable.app`; Windows is a SmartScreen
 # "More info" > "Run anyway".
 #
-# After PUBLISHING a release: bump openclide/homebrew-tap
-# Formula/clidable.rb (version + per-asset sha256s) — the formula pins exact
-# assets, so until it's bumped `brew upgrade` keeps serving the old version.
-# The release job prints a ready-to-paste checklist with the new hashes in its
-# step summary.
+# After PUBLISHING a release, run `bun scripts/publish-release.ts` locally. It
+# publishes the seven npm packages and opens the Homebrew tap PR, working from
+# THIS release's downloaded assets (checksum-verified). Those two steps live on a
+# machine rather than here because they are the only ones needing credentials CI
+# doesn't have — so no npm token or tap PAT has to exist in this repo at all, and
+# the irreversible half (an npm publish is permanent) happens after a human has
+# reviewed the draft. The release job prints the exact command in its summary.
 #
 # The Release is created as a DRAFT — review the artifacts, then publish.
 name: Release
@@ -141,82 +143,6 @@ jobs:
           name: server-binaries
           path: artifacts/*
           if-no-files-found: error
-
-  # Publish the npm channel from the SAME binaries the release ships, so the
-  # tarballs can't drift from the GitHub assets. Seven packages: a thin
-  # `clidable` wrapper plus one `@clidable/<platform>` per binary — see
-  # scripts/build-npm-packages.ts for why it isn't one package or a postinstall
-  # download.
-  npm:
-    needs: server
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      # `npm publish` needs a real npm; registry-url is what wires NODE_AUTH_TOKEN.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: server-binaries
-          path: artifacts
-
-      - name: Stage the seven packages
-        run: bun scripts/build-npm-packages.ts --version="${GITHUB_REF_NAME#v}"
-
-      # Platform packages first: the wrapper pins them as optionalDependencies at
-      # the exact same version, so publishing it first leaves a window where
-      # `npm i -g clidable` resolves a wrapper whose binaries don't exist yet.
-      # `--access public` is required — scoped packages default to restricted.
-      - name: Publish @clidable/* then clidable
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
-          # NEVER publish straight to `latest`. The GitHub Release is a draft a
-          # human reviews and may reject — but an npm publish is forever
-          # (unpublish is blocked after 72h, and the version can never be
-          # reused). Publishing as `latest` here would serve a rejected build to
-          # every `npm i -g clidable` before anyone looked at it.
-          #
-          # So everything lands on `staged`, and npm-promote.yml moves the
-          # dist-tag to `latest` when the release is actually PUBLISHED. Nobody
-          # gets it from a bare install until then.
-          dist_tag=staged
-          echo "publishing with --tag $dist_tag (promoted to latest on release publish)"
-
-          # Idempotent: npm refuses to republish a version, which would fail a
-          # re-run after a partial publish (bad token, transient 5xx) and leave
-          # the release unfinishable. Skip what's already there instead.
-          publish() {
-            local dir="$1"
-            local name; name="$(jq -r .name "$dir/package.json")"
-            if npm view "$name@$tag" version >/dev/null 2>&1; then
-              echo "  = $name@$tag already published, skipping"
-              return
-            fi
-            # `./` is load-bearing: npm-package-arg reads a bare `a/b` as the
-            # GitHub shorthand user/repo, so `npm publish npm-dist/clidable`
-            # tries to git-ls-remote github.com/npm-dist/clidable and dies.
-            # (The scoped dirs happen to parse as paths, which is exactly how
-            # this hid: six packages would publish and the wrapper — the only
-            # one anyone installs — would not.)
-            npm publish "./$dir" --access public --tag "$dist_tag"
-          }
-
-          for dir in npm-dist/@clidable/*; do publish "$dir"; done
-          publish npm-dist/clidable
 
   desktop:
     needs: preflight
@@ -338,9 +264,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    # Also waits on npm: a draft release is the signal that every channel
-    # succeeded, so it must not appear when the npm publish failed.
-    needs: [server, desktop, npm]
+    needs: [server, desktop]
     # Run whenever the server binaries exist, even if a desktop leg failed —
     # the draft is reviewed by a human before publishing, and "Re-run failed
     # jobs" back-fills a flaked leg and re-drafts with the full set. Without
@@ -351,12 +275,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # Before download-artifact: checkout cleans the workspace, which would
-      # take dist/ with it. Needed for scripts/render-brew-packaging.ts below.
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-
+      # No checkout: this job only collects artifacts and drafts the release.
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -372,42 +291,27 @@ jobs:
       # runbook — and a wrong paste fails for users, not for us — so render both
       # files complete from this release's own SHA256SUMS. Copy them verbatim
       # into openclide/homebrew-tap.
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Render the Homebrew formula + cask (step summary)
+      # The tap and npm are published from a MACHINE, not from here: those are the
+      # only two steps needing credentials CI doesn't have, and running them
+      # locally means no NPM_TOKEN or tap PAT has to exist in this repo at all.
+      # Print the command so publishing the draft and finishing the release are
+      # one glance apart.
+      - name: Next step (step summary)
         run: |
-          set -euo pipefail
-          bun scripts/render-brew-packaging.ts \
-            --sums=dist/SHA256SUMS --version="${GITHUB_REF_NAME#v}" --out=brew-out
           {
-            echo "## After publishing: commit these to openclide/homebrew-tap"
+            echo "## After you publish this draft"
             echo ""
-            echo "Both files are rendered from this release's SHA256SUMS — paste as-is,"
-            echo "no hashes to transcribe."
+            echo "Run this locally — it publishes npm and opens the Homebrew tap PR:"
             echo ""
-            echo "### Formula/clidable.rb"
-            echo '```ruby'
-            cat brew-out/Formula/clidable.rb
+            echo '```bash'
+            echo "bun scripts/publish-release.ts --version=${GITHUB_REF_NAME#v}"
             echo '```'
             echo ""
-            if [ -f brew-out/Casks/clidable-desktop.rb ]; then
-              echo "### Casks/clidable-desktop.rb"
-              echo '```ruby'
-              cat brew-out/Casks/clidable-desktop.rb
-              echo '```'
-            else
-              echo "### Casks/clidable-desktop.rb — NOT RENDERED"
-              echo ""
-              echo "No dmg in this build's SHA256SUMS (a desktop leg failed). Re-run it and"
-              echo "re-run this job before touching the tap."
-            fi
+            echo "It downloads THIS release's assets, verifies them against SHA256SUMS,"
+            echo "then publishes the seven npm packages and opens the tap PR. Idempotent —"
+            echo "safe to re-run. Add \`--dry-run\` to rehearse."
             echo ""
-            echo "Naming contract (the README quick start depends on it): the formula is"
-            echo 'named `clidable` and installs `… => "clidable"`, owning the bare name on'
-            echo "every platform; the desktop app is the separate \`clidable-desktop\` cask."
-            echo "Artifact filenames are downloads, never the typed command."
+            echo "Nothing reaches \`npm i -g clidable\` or \`brew upgrade\` until you do."
           } >> "$GITHUB_STEP_SUMMARY"
 
       # The `if:` above lets this job draft even when a leg failed, so say so
@@ -419,9 +323,8 @@ jobs:
           {
             echo ""
             echo "### Channel status"
-            echo "- npm: \`${{ needs.npm.result }}\`"
             echo "- desktop bundles: \`${{ needs.desktop.result }}\`"
-            if [ "${{ needs.npm.result }}" != "success" ] || [ "${{ needs.desktop.result }}" != "success" ]; then
+            if [ "${{ needs.desktop.result }}" != "success" ]; then
               echo ""
               echo "> ⚠️ **Do not publish this draft yet.** Re-run the failed job(s) first —"
               echo "> the docs advertise every channel, so publishing with one missing points"
