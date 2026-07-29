@@ -16,20 +16,10 @@ A native window with OS-level glass, a menu-bar tray showing each agent's live s
 
 The app carries its own server — nothing else to install.
 
-> **First launch: the app isn't code-signed yet**, so your OS will stop it once.
-> This applies to the Homebrew cask too (Homebrew quarantines casks by default).
->
-> - **macOS** — you'll see *"Apple could not verify Clidable is free of
->   malware."* Open **System Settings → Privacy & Security**, scroll down, and
->   click **Open Anyway**. (The old right-click → Open trick no longer works on
->   macOS 15+.) Or clear the flag yourself:
->   `xattr -cr /Applications/Clidable.app`.
-> - **Windows** — SmartScreen shows *"Windows protected your PC"*: click **More
->   info → Run anyway**.
-> - **Linux** — nothing to do.
->
-> Signing and notarization are on the roadmap. The `clidable` CLI below is
-> unaffected — it's downloaded without a quarantine flag and runs immediately.
+> **Windows first launch**: the installer isn't code-signed yet, so SmartScreen
+> shows *"Windows protected your PC"* — click **More info → Run anyway**. macOS
+> and Linux open normally (the macOS app is signed with a Developer ID
+> certificate and notarized by Apple).
 
 ### The `clidable` command (browser UI, servers, scripting)
 

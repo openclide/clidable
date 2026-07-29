@@ -22,12 +22,12 @@
 # platform is visible — "Re-run failed jobs" rebuilds the flaked leg AND
 # re-runs release, which replaces the draft with the full set.
 #
-# Desktop bundles are UNSIGNED for now (signing/notarization is on the
-# roadmap). The `body:` below bakes the workarounds into every draft's notes:
-# macOS 15+ removed the right-click-Open Gatekeeper override, so the working
-# paths are System Settings > Privacy & Security > "Open Anyway", or
-# `xattr -cr /Applications/Clidable.app`; Windows is a SmartScreen
-# "More info" > "Run anyway".
+# macOS bundles are signed with a Developer ID certificate and notarized when
+# the APPLE_* secrets are present (the job builds unsigned without them, so a
+# revoked/expired cert degrades instead of breaking the release). Tauri does not
+# import the certificate itself — see the keychain step in the desktop job.
+# Windows bundles are still unsigned: SmartScreen shows "More info" >
+# "Run anyway" until an Authenticode cert exists.
 #
 # After PUBLISHING a release, run `bun scripts/publish-release.ts` locally. It
 # publishes the seven npm packages and opens the Homebrew tap PR, working from
@@ -165,6 +165,11 @@ jobs:
           - platform: linux
             runs-on: ubuntu-22.04
     runs-on: ${{ matrix.runs-on }}
+    env:
+      # `secrets` is not available in step-level `if`, so surface presence here.
+      # Everything signing-related keys off this, which keeps the job building
+      # unsigned bundles if the secrets are ever removed rather than failing.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' && 'yes' || 'no' }}
     # 90, not 60: the macOS leg does TWO cold fat-LTO builds (lto=true +
     # codegen-units=1 over ~500 crates) plus three sidecar compiles, and the
     # rust cache is cold on every tag (see the rust-cache note below).
@@ -232,11 +237,58 @@ jobs:
 
       # Host-arch bundle. beforeBuildCommand builds the host sidecar.
       # macos: .app/.dmg (aarch64) · windows: NSIS + MSI · linux: AppImage/deb/rpm
+      # Tauri does NOT import the certificate itself — it only reads
+      # APPLE_SIGNING_IDENTITY out of an already-unlocked keychain. So CI has to
+      # do the keychain dance. A dedicated throwaway keychain (not `login`)
+      # keeps this off any shared state and dies with the runner.
+      - name: Import the Developer ID certificate
+        if: matrix.platform == 'macos' && env.HAS_APPLE_CERT == 'yes'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/clidable-signing.keychain-db"
+          # Ephemeral password for an ephemeral keychain — it protects nothing
+          # beyond this run, and never leaves the runner.
+          KEYCHAIN_PWD="$(uuidgen)"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          # Without this, codesign blocks on a GUI "allow access" prompt that
+          # nothing can answer on a headless runner, and the build hangs.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN" >/dev/null
+
+          # Put it in the search list so codesign actually looks there.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          echo "identities available to codesign:"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
       - name: Build desktop bundle
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: bun run tauri build
 
       - name: Build desktop bundle (macOS x86_64)
         if: matrix.platform == 'macos'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: bun run tauri build --target x86_64-apple-darwin
 
       # Bundle filenames already carry version + arch (Clidable_0.1.0_aarch64.dmg,
@@ -348,11 +400,11 @@ jobs:
             platform, `chmod +x`, run — or use the install script / Homebrew
             tap (see the README).
 
-            **Desktop app**: the bundles below are **unsigned** for now.
-            - **macOS**: after installing the .dmg, either allow it under
-              **System Settings › Privacy & Security › "Open Anyway"** (the
-              old right-click-Open override no longer exists on macOS 15+),
-              or run `xattr -cr /Applications/Clidable.app`.
-            - **Windows**: SmartScreen will warn — **More info › Run anyway**.
+            **Desktop app**
+            - **macOS**: signed with a Developer ID certificate and notarized by
+              Apple — it opens normally, no Gatekeeper override needed.
+            - **Windows**: not code-signed yet, so SmartScreen will warn —
+              **More info › Run anyway**.
+            - **Linux**: AppImage / .deb / .rpm, nothing to bypass.
           files: |
             dist/*

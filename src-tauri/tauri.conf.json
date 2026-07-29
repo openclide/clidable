@@ -3,14 +3,12 @@
   "productName": "Clidable",
   "version": "../package.json",
   "identifier": "dev.clidable.app",
-
   "build": {
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun scripts/build-sidecar.ts",
     "devUrl": "http://127.0.0.1:7878",
     "frontendDist": "../dist/web"
   },
-
   "app": {
     "withGlobalTauri": false,
     "macOSPrivateApi": true,
@@ -30,7 +28,10 @@
         "transparent": true,
         "decorations": true,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 15, "y": 28 },
+        "trafficLightPosition": {
+          "x": 15,
+          "y": 28
+        },
         "dragDropEnabled": false
       }
     ],
@@ -38,11 +39,12 @@
       "csp": null
     }
   },
-
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/clidable-server"],
+    "externalBin": [
+      "binaries/clidable-server"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -52,6 +54,10 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "GUI for CLI coding agents",
-    "longDescription": "Clidable wraps Claude Code, Codex CLI, Antigravity CLI, and friends in a beautiful UI with checkpoints, multi-agent terminals, and project preview."
+    "longDescription": "Clidable wraps Claude Code, Codex CLI, Antigravity CLI, and friends in a beautiful UI with checkpoints, multi-agent terminals, and project preview.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "10.15"
+    }
   }
 }

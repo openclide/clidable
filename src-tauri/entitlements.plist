@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hardened-runtime entitlements. Notarization REQUIRES the hardened runtime, and
+  the hardened runtime blocks things this app genuinely needs — so without this
+  file a notarized build passes Apple's checks and then crashes on launch.
+
+  The demanding component is the sidecar: our server is a Bun single-file binary
+  with JavaScriptCore embedded, and JSC compiles JS to machine code at run time.
+  Under the hardened runtime that is denied by default.
+
+    allow-jit                         JSC's write/execute JIT pages.
+    allow-unsigned-executable-memory  JSC also maps executable memory that isn't
+                                      backed by a signed file; allow-jit alone is
+                                      not always sufficient for it.
+    disable-library-validation        lets the app run the sidecar and other
+                                      helper executables that carry a different
+                                      signature (Team ID) than the main binary.
+
+  Deliberately NOT here: any com.apple.security.* App Sandbox keys. Clidable
+  spawns the user's shells and agent CLIs and reads their projects — sandboxing
+  it would break the entire product, and Developer ID distribution doesn't
+  require it (only the Mac App Store does).
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>
