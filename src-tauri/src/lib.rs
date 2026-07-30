@@ -73,6 +73,135 @@ fn server_up() -> bool {
     TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(300)).is_ok()
 }
 
+/// Put `clidable` on the user's PATH by symlinking the bundled server binary,
+/// the way VS Code's "Install 'code' command" does.
+///
+/// The app already SHIPS the CLI — `Clidable.app/Contents/MacOS/clidable-server`
+/// is the same binary Homebrew and npm install, and it answers `--version`,
+/// `open`, `stop`, `skills`, everything. It just isn't reachable from a shell,
+/// so `clidable` is "command not found" for someone who installed only the app.
+///
+/// A symlink rather than a copy: 70 MB, and an app update then updates the
+/// command for free instead of stranding a stale copy.
+///
+/// `~/.local/bin` because it needs no privilege escalation and is already on
+/// PATH for most shells (and is where Clidable's own install.sh puts it). If it
+/// is NOT on PATH we say so rather than silently succeeding into a directory
+/// the user's shell ignores.
+#[tauri::command]
+fn install_cli() -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        Err("On Windows, install the CLI with `npm i -g clidable` or download the .exe from the releases page.".into())
+    }
+    #[cfg(unix)]
+    {
+        let exe = std::env::current_exe().map_err(|e| format!("cannot locate the app: {e}"))?;
+        // …/Clidable.app/Contents/MacOS/clidable  →  sibling clidable-server
+        let target = exe
+            .parent()
+            .ok_or("unexpected app layout")?
+            .join("clidable-server");
+        if !target.exists() {
+            return Err(format!("bundled CLI not found at {}", target.display()));
+        }
+
+        let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+        let dir = std::path::Path::new(&home).join(".local/bin");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        let link = dir.join("clidable");
+
+        // Replace an existing link/file so re-running after an app move repairs
+        // a dangling symlink instead of failing.
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link)
+            .map_err(|e| format!("cannot link {}: {e}", link.display()))?;
+
+        let on_path = std::env::var("PATH")
+            .unwrap_or_default()
+            .split(':')
+            .any(|p| p == dir.to_string_lossy());
+        Ok(if on_path {
+            format!("Installed. `clidable` is ready — try `clidable open .`")
+        } else {
+            format!(
+                "Linked {} — but that directory is not on your PATH. Add it:\n\n    export PATH=\"$HOME/.local/bin:$PATH\"",
+                link.display()
+            )
+        })
+    }
+}
+
+/// Adopt the user's real PATH when we were launched from the GUI.
+///
+/// A Finder/Dock-launched app inherits **launchd's** environment, not your
+/// shell's — and `launchctl getenv PATH` is normally unset, so the app gets
+/// `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else. Every coding agent lives
+/// somewhere else: `~/.local/bin` (Claude Code's installer), nvm, `~/.bun/bin`,
+/// Homebrew, `~/.antigravity/bin`. Without this the packaged app finds ZERO
+/// agents and every tile reads "not installed", while the same build launched
+/// from a terminal finds them all. That asymmetry is why it survived testing.
+///
+/// Fixing it HERE rather than in the server is deliberate: this process is the
+/// one with the broken environment, and the sidecar — plus every PTY the sidecar
+/// later spawns — inherits whatever we set. One fix, correct everywhere
+/// downstream.
+///
+/// Interactive login shell (`-ilc`), because that is where PATH actually gets
+/// set: nvm, bun and friends append to `.zshrc`, which a non-interactive `-lc`
+/// would skip. Markers bracket the value so a chatty rc file can't corrupt it,
+/// and the whole thing runs under a timeout on a worker thread — an rc file that
+/// blocks must not hang app startup.
+#[cfg(unix)]
+fn adopt_login_shell_path() {
+    use std::sync::mpsc;
+
+    const BEGIN: &str = "__CLIDABLE_PATH_BEGIN__";
+    const END: &str = "__CLIDABLE_PATH_END__";
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let (tx, rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let out = std::process::Command::new(&shell)
+            .args(["-ilc", &format!("printf '{BEGIN}%s{END}' \"$PATH\"")])
+            .output();
+        let _ = tx.send(out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()));
+    });
+
+    let Ok(Some(stdout)) = rx.recv_timeout(Duration::from_secs(5)) else {
+        eprintln!("[clidable] could not read the login shell's PATH; agent detection may miss agents");
+        return;
+    };
+    let Some(resolved) = stdout
+        .split_once(BEGIN)
+        .and_then(|(_, rest)| rest.split_once(END))
+        .map(|(p, _)| p.trim())
+        .filter(|p| !p.is_empty())
+    else {
+        return;
+    };
+
+    // Union, login-shell entries first, preserving order and dropping dupes.
+    // A merge rather than a replace so anything the launcher deliberately put on
+    // PATH survives — and so this is a near no-op when we were already started
+    // from a terminal with a good PATH.
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    let merged: Vec<&str> = resolved
+        .split(':')
+        .chain(inherited.split(':'))
+        .filter(|e| !e.is_empty() && seen.insert(*e))
+        .collect();
+    std::env::set_var("PATH", merged.join(":"));
+}
+
+#[cfg(not(unix))]
+fn adopt_login_shell_path() {
+    // Windows GUI processes inherit the user's PATH from the registry, so there
+    // is nothing to repair.
+}
+
 /// Spawn the bundled server as a sidecar IF one isn't already up. Plugin-shell
 /// sidecars die with the app (Quit) but survive window-close (the app process
 /// stays alive) — exactly the "background app, server until Quit" model.
@@ -638,6 +767,7 @@ fn render_tray(app: &AppHandle, agents: &[TrayAgent]) {
     let menu = match mb
         .separator()
         .text("show", "Show Clidable")
+        .text("install-cli", "Install `clidable` Command")
         .separator()
         .text("quit", "Quit Clidable")
         .build()
@@ -717,7 +847,8 @@ pub fn run() {
             capture::capture_webview,
             open_workspace_window,
             open_external,
-            reveal_window
+            reveal_window,
+            install_cli
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -726,6 +857,9 @@ pub fn run() {
             // If so, the main window's declarative load succeeds and needs no
             // re-navigation; if not, that first load races a not-yet-ready server.
             let was_up = server_up();
+            // BEFORE the sidecar spawns: it inherits this process's PATH, and so
+            // does every terminal it later opens.
+            adopt_login_shell_path();
             // Own the background server for this app's lifetime.
             ensure_server(&handle);
 
@@ -775,6 +909,7 @@ pub fn run() {
             // window; Quit exits the app (killing the sidecar server with it).
             let menu = MenuBuilder::new(app)
                 .text("show", "Show Clidable")
+                .text("install-cli", "Install `clidable` Command")
                 .separator()
                 .text("quit", "Quit Clidable")
                 .build()?;
@@ -791,6 +926,10 @@ pub fn run() {
                     let id = event.id().as_ref();
                     match id {
                         "show" => focus_main(app),
+                        "install-cli" => match install_cli() {
+                            Ok(msg) => println!("[clidable] {msg}"),
+                            Err(e) => eprintln!("[clidable] install-cli failed: {e}"),
+                        },
                         "quit" => app.exit(0),
                         // Clicking an agent row opens that exact terminal. We only
                         // know its session id, not which window holds it, so fan
