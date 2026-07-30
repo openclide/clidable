@@ -12,7 +12,7 @@ A native window with OS-level glass, a menu-bar tray showing each agent's live s
 
 - **macOS** — `brew install --cask openclide/tap/clidable-desktop`, or download the `.dmg` (Apple silicon or Intel) from the [Releases page](https://github.com/openclide/clidable/releases).
 - **Windows** — download and run the `Clidable_…-setup.exe` (or `.msi`) installer.
-- **Linux** — grab the AppImage, `.deb`, or `.rpm`.
+- **Linux** — grab the `.deb` (Debian/Ubuntu) or `.rpm` (Fedora/RHEL). On other distros, use the `clidable` CLI below — the server binary is self-contained and the browser UI is the full product.
 
 The app carries its own server — nothing else to install.
 

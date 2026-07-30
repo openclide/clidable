@@ -134,7 +134,7 @@ Installers are on the [Releases
 page](https://github.com/openclide/clidable/releases). Building it yourself is
 also one command with the [Rust toolchain](https://rustup.rs) installed —
 `bun run tauri:build` compiles the server into a sidecar automatically and
-drops a bundle for your platform (`.app`/`.dmg`, AppImage/deb/rpm, or NSIS
+drops a bundle for your platform (`.app`/`.dmg`, `.deb`/`.rpm`, or NSIS
 installer) in `src-tauri/target/release/bundle/`.
 
 ## Use it from a server (Tailscale)

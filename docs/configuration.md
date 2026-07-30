@@ -150,7 +150,7 @@ Terminals are spawned with the agent launched directly (not a wrapper shell), wi
 ## Platform support
 
 - **macOS** — fully exercised; the development platform. Desktop app (`.dmg`, Apple silicon + Intel) has native vibrancy blur.
-- **Linux** — supported, both headless (a VPS behind your own access layer) and as a desktop app (AppImage / `.deb` / `.rpm`; the shell falls back to a CSS gradient — no compositor blur API on Linux).
+- **Linux** — supported, both headless (a VPS behind your own access layer) and as a desktop app (`.deb` / `.rpm`; the shell falls back to a CSS gradient — no compositor blur API on Linux).
 - **Windows** — supported (ConPTY terminals, PowerShell-based port scan, Acrylic/Mica in the desktop app; setup `.exe` / `.msi` installers), but less battle-tested than macOS/Linux.
 
 Runtime requirements recap: **git** and your agent CLIs, everywhere. **Bun ≥ 1.3.14** only to run from source, to use the new-project templates (scaffolding runs `bun create …`), or when the Run dot starts a project with no lockfile (Bun is the assumed package manager).

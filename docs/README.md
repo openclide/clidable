@@ -13,7 +13,7 @@ The agents still run in their real terminals (their native TUI, full fidelity) �
 brew install --cask openclide/tap/clidable-desktop
 ```
 
-…or download the installer for macOS (`.dmg`), Windows (setup `.exe` / `.msi`), or Linux (AppImage / `.deb` / `.rpm`) from the [Releases page](https://github.com/openclide/clidable/releases). The app carries its own server — there is nothing else to install.
+…or download the installer for macOS (`.dmg`), Windows (setup `.exe` / `.msi`), or Linux (`.deb` / `.rpm`) from the [Releases page](https://github.com/openclide/clidable/releases). The app carries its own server — there is nothing else to install.
 
 **The `clidable` command** — for the browser UI, a VPS, or scripting. Any one of:
 

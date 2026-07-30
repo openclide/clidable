@@ -7,7 +7,7 @@
 #     host-native binary can be boot-verified here; the others are
 #     existence-checked by scripts/build.ts, and their Tailwind/asset
 #     correctness is implied by the identical host build.
-#   * `Clidable_*` desktop bundles (.dmg / NSIS+MSI / AppImage+deb+rpm) —
+#   * `Clidable_*` desktop bundles (.dmg / NSIS+MSI / deb+rpm) —
 #     these CANNOT cross-compile from one runner: each needs its platform's
 #     native toolchain (Xcode, MSVC, webkit2gtk), so it's a three-runner
 #     matrix. macOS is one runner producing BOTH archs: an arm64 host
@@ -236,7 +236,7 @@ jobs:
           lipo -archs src-tauri/binaries/clidable-server-x86_64-apple-darwin | grep -qx x86_64
 
       # Host-arch bundle. beforeBuildCommand builds the host sidecar.
-      # macos: .app/.dmg (aarch64) · windows: NSIS + MSI · linux: AppImage/deb/rpm
+      # macos: .app/.dmg (aarch64) · windows: NSIS + MSI · linux: deb/rpm
       # Tauri does NOT import the certificate itself — it only reads
       # APPLE_SIGNING_IDENTITY out of an already-unlocked keychain. So CI has to
       # do the keychain dance. A dedicated throwaway keychain (not `login`)
@@ -284,15 +284,28 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # linuxdeploy (the AppImage bundler) is itself an AppImage, so it
-          # needs FUSE to self-mount — and it swallows its own stderr, so the
-          # only symptom is a bare "failed to run linuxdeploy". libfuse2 is
-          # installed above; this makes it extract instead of mount, which also
-          # survives the eventual move to a runner/container without FUSE.
-          # NO_STRIP: linuxdeploy's strip pass fails on some glibc/binary combos.
+          # Kept for when AppImage is re-enabled: linuxdeploy is itself an
+          # AppImage (needs FUSE, hence libfuse2 above; this extracts instead of
+          # mounting) and its strip pass is fragile on some glibc/binary combos.
           APPIMAGE_EXTRACT_AND_RUN: 1
           NO_STRIP: true
-        run: bun run tauri build
+        # Linux ships .deb + .rpm only. AppImage is DELIBERATELY excluded: it
+        # failed every attempt with a bare `failed to run linuxdeploy` and no
+        # stderr — linuxdeploy swallows its own output — while .deb and .rpm
+        # built cleanly each time. Worse, the failure came BEFORE the collect
+        # step, so one broken target dropped all three and Linux got nothing.
+        #
+        # The cost is narrow: .deb + .rpm cover Debian/Ubuntu and Fedora/RHEL,
+        # and the distros AppImage uniquely serves (Arch, NixOS, immutable) are
+        # the ones whose users reach for install.sh and the CLI anyway. Re-add
+        # `appimage` once the underlying failure is actually diagnosed rather
+        # than guessed at.
+        run: |
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            bun run tauri build --bundles deb,rpm
+          else
+            bun run tauri build
+          fi
 
       - name: Build desktop bundle (macOS x86_64)
         if: matrix.platform == 'macos'
@@ -417,6 +430,6 @@ jobs:
               Apple — it opens normally, no Gatekeeper override needed.
             - **Windows**: not code-signed yet, so SmartScreen will warn —
               **More info › Run anyway**.
-            - **Linux**: AppImage / .deb / .rpm, nothing to bypass.
+            - **Linux**: .deb / .rpm, nothing to bypass.
           files: |
             dist/*
