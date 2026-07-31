@@ -8,10 +8,10 @@
  * platform can't leave a package un-promoted (which would strand `latest` on a
  * wrapper whose binaries it can't resolve).
  */
-import { TARGETS } from "./build-npm-packages";
+import { TARGETS, WRAPPER } from "./build-npm-packages";
 
 export function packageNames(): string[] {
-  return [...TARGETS.map((t) => `@clidable/${t.platform}`), "clidable"];
+  return [...TARGETS.map((t) => `@clidable/${t.platform}`), WRAPPER];
 }
 
 if (import.meta.main) console.log(packageNames().join("\n"));

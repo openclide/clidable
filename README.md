@@ -53,10 +53,10 @@ brew install openclide/tap/clidable
 clidable
 ```
 
-**npm** (any OS with Node):
+**npm** (any OS with Node) — scoped package, `clidable` command:
 
 ```sh
-npm install -g clidable
+npm install -g @clidable/cli
 clidable
 ```
 

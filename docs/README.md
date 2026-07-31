@@ -22,7 +22,7 @@ brew install openclide/tap/clidable          # Homebrew (macOS / Linux)
 ```
 
 ```bash
-npm install -g clidable                      # npm (any OS with Node)
+npm install -g @clidable/cli                 # npm (any OS with Node)
 ```
 
 ```bash

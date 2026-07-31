@@ -34,8 +34,9 @@ curl -fsSL https://raw.githubusercontent.com/openclide/clidable/main/install.sh 
 # …or Homebrew (macOS / Linux):
 brew install openclide/tap/clidable
 
-# …or npm (needs Node — see the next step):
-npm i -g clidable
+# …or npm (needs Node — see the next step). The package is scoped; the
+# command it installs is still `clidable`:
+npm i -g @clidable/cli
 ```
 
 **Node.** Some agent CLIs still install from npm, so put Node on the box first:

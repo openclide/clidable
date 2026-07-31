@@ -1,5 +1,5 @@
 /**
- * Stage the npm publish tree: one thin `clidable` wrapper plus one
+ * Stage the npm publish tree: one thin `@clidable/cli` wrapper plus one
  * `@clidable/<platform>` package per compiled binary.
  *
  *   bun scripts/build-npm-packages.ts                       # from ./artifacts
@@ -38,6 +38,22 @@ const fromDir = resolve(root, flag(Bun.argv, "from") ?? "artifacts");
 const outDir = resolve(root, flag(Bun.argv, "out") ?? "npm-dist");
 const version =
   flag(Bun.argv, "version") ?? (await Bun.file(join(root, "package.json")).json()).version;
+
+/**
+ * The wrapper's npm coordinate — the one package users install.
+ *
+ * Scoped, and not the bare `clidable`, because npm's typosquat filter refuses
+ * that name: normalized it is one edit from the existing `cli-table`, so
+ * `npm publish` returns 403 "Package name too similar". The name is
+ * unregistered (the registry 404s), just blocked, so this is not squatting we
+ * can wait out.
+ *
+ * This does NOT change what users type. The command name comes from the `bin`
+ * map's key, which stays `clidable` — see wrapperManifest. Per CLAUDE.md the
+ * naming contract is about the command, and it is intact; only the install
+ * line differs (`npm i -g @clidable/cli`).
+ */
+export const WRAPPER = "@clidable/cli";
 
 /**
  * Release artifact → npm platform package. The keys on the right are
@@ -111,7 +127,7 @@ export function platformManifest(t: (typeof TARGETS)[number]): Record<string, un
   return {
     name: `@clidable/${t.platform}`,
     ...common,
-    description: `Clidable binary for ${t.os} ${t.cpu}. Installed automatically by the \`clidable\` package.`,
+    description: `Clidable binary for ${t.os} ${t.cpu}. Installed automatically by the \`${WRAPPER}\` package.`,
     // npm skips a package whose os/cpu don't match, which is what makes the
     // wrapper's optionalDependencies resolve to exactly one binary.
     os: [t.os],
@@ -124,10 +140,12 @@ export function platformManifest(t: (typeof TARGETS)[number]): Record<string, un
 
 export function wrapperManifest(): Record<string, unknown> {
   return {
-    name: "clidable",
+    name: WRAPPER,
     ...common,
     description: "GUI for CLI coding agents — real terminals for Claude Code, Codex, Antigravity and friends.",
     keywords: ["claude-code", "codex", "ai", "agents", "cli", "terminal", "tui"],
+    // The key is the command npm puts on PATH, and it is independent of the
+    // package name above — `@clidable/cli` still installs `clidable`.
     bin: { clidable: "bin/clidable.js" },
     files: ["bin", "LICENSE", "NOTICE"],
     // Node only runs the ~40-line resolver shim; the binary it execs is
@@ -221,7 +239,9 @@ async function main(): Promise<void> {
   await rm(outDir, { recursive: true, force: true });
 
   // --- wrapper -------------------------------------------------------------
-  const wrapperDir = join(outDir, "clidable");
+  // The staging tree mirrors the package names, so every directory here is
+  // `@clidable/<something>` and publish-release can derive one from the other.
+  const wrapperDir = join(outDir, ...WRAPPER.split("/"));
   await mkdir(join(wrapperDir, "bin"), { recursive: true });
   await Bun.write(
     join(wrapperDir, "package.json"),
@@ -229,9 +249,9 @@ async function main(): Promise<void> {
   );
   await Bun.write(join(wrapperDir, "bin", "clidable.js"), SHIM);
   await chmod(join(wrapperDir, "bin", "clidable.js"), 0o755);
-  await Bun.write(join(wrapperDir, "README.md"), await readmeFor("clidable"));
+  await Bun.write(join(wrapperDir, "README.md"), await readmeFor(WRAPPER));
   await copyLegal(wrapperDir);
-  console.log(`✓ clidable@${version}`);
+  console.log(`✓ ${WRAPPER}@${version}`);
 
   // --- one package per platform -------------------------------------------
   const missing: string[] = [];
@@ -279,18 +299,22 @@ async function copyLegal(dir: string): Promise<void> {
 }
 
 async function readmeFor(name: string): Promise<string> {
-  const isWrapper = name === "clidable";
+  const isWrapper = name === WRAPPER;
   return (
     `# ${name}\n\n` +
     (isWrapper
       ? "GUI for CLI coding agents — real terminals for Claude Code, Codex, Antigravity\n" +
         "and friends, with rewindable checkpoints, live preview, and one-click\n" +
         "MCP / skills / plugins.\n\n" +
-        "```sh\nnpm install -g clidable\nclidable\n```\n\n" +
+        `\`\`\`sh\nnpm install -g ${WRAPPER}\nclidable\n\`\`\`\n\n` +
         "Then open http://127.0.0.1:7878.\n\n" +
+        "The package is scoped; **the command it installs is `clidable`**.\n\n" +
+        "This is the server and CLI — the browser UI, which is the full product.\n" +
+        "The native desktop app is a separate download (`.dmg` / `.exe` / `.deb` /\n" +
+        "`.rpm`, or `brew install --cask openclide/tap/clidable-desktop`).\n\n" +
         "Docs: https://openclide.github.io/clidable/\n"
-      : `Platform binary for [clidable](https://www.npmjs.com/package/clidable).\n\n` +
-        "You don't install this directly — `clidable` pulls in the one matching\n" +
+      : `Platform binary for [${WRAPPER}](https://www.npmjs.com/package/${WRAPPER}).\n\n` +
+        `You don't install this directly — \`${WRAPPER}\` pulls in the one matching\n` +
         "your platform automatically.\n")
   );
 }

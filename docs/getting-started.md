@@ -30,13 +30,18 @@ brew install openclide/tap/clidable          # Homebrew (macOS / Linux)
 ```
 
 ```bash
-npm install -g clidable                      # npm (any OS with Node)
+npm install -g @clidable/cli                 # npm (any OS with Node)
 ```
 
 ```bash
 # Install script (macOS / Linux) — detects OS/arch, verifies checksums, installs to ~/.local/bin
 curl -fsSL https://raw.githubusercontent.com/openclide/clidable/main/install.sh | bash
 ```
+
+All three put the same **`clidable`** command on your `PATH`. (The npm package
+is scoped — `@clidable/cli` — because npm's name filter rejects the bare
+`clidable` as too close to an unrelated package called `cli-table`. It only
+changes the install line, never what you type.)
 
 On Windows you can also download `clidable-server-windows-x64.exe` (or `-windows-arm64.exe` on Snapdragon-X / ARM machines) from the [Releases page](https://github.com/openclide/clidable/releases) — rename it to `clidable.exe` and that's the `clidable` command.
 

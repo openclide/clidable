@@ -138,6 +138,16 @@ Tribal knowledge from [`skills-directory/skill-codex`](https://github.com/skills
   them). The eventual desktop app ships as the **`clidable-desktop` cask**, so
   the formula keeps the bare name — `brew install …/clidable` means the CLI on
   every platform, not a GUI dragged onto a headless box.
+  **On npm the wrapper is `@clidable/cli`, not `clidable`** — npm's typosquat
+  filter 403s the bare name ("too similar to `cli-table`"; normalized they are
+  one edit apart). The name is *unregistered*, just blocked, so this isn't
+  something a later release can reclaim by waiting. It does not dent the rule
+  above: the command comes from the `bin` map's **key**, so `npm i -g
+  @clidable/cli` still installs `clidable`. Only that one install line differs
+  — brew, install.sh, and the desktop app are untouched. The scoped name lives
+  in `WRAPPER` in [scripts/build-npm-packages.ts](scripts/build-npm-packages.ts);
+  `publish-release.ts` derives each staging directory by splitting a package
+  name on `/`, so every published package must be scoped.
 - **Single port (7878)** — Bun.serve handles HTML + API + WS. Dev = prod = same.
 - **PTY-first for agents.** No JSON-stream parsers, no `-p`. The terminal IS the agent UI. (Skill recipes in AI Team are the exception — there the lead agent's TUI invokes a delegate via bash.)
 - **Per-agent skills file layout**:

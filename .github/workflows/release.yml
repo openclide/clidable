@@ -385,7 +385,7 @@ jobs:
             echo "then publishes the seven npm packages and opens the tap PR. Idempotent —"
             echo "safe to re-run. Add \`--dry-run\` to rehearse."
             echo ""
-            echo "Nothing reaches \`npm i -g clidable\` or \`brew upgrade\` until you do."
+            echo "Nothing reaches \`npm i -g @clidable/cli\` or \`brew upgrade\` until you do."
           } >> "$GITHUB_STEP_SUMMARY"
 
       # The `if:` above lets this job draft even when a leg failed, so say so

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { platformManifest, wrapperManifest, TARGETS } from "./build-npm-packages";
+import { platformManifest, wrapperManifest, TARGETS, WRAPPER } from "./build-npm-packages";
 
 /**
  * The npm channel is six binaries behind one name, and the join between them is
@@ -33,8 +33,8 @@ describe("npm platform packages", () => {
   });
 
   test("this host resolves to a package we publish", () => {
-    // If this fails on a supported dev machine, `npm i -g clidable` is broken
-    // there in exactly the way the shim's error message describes.
+    // If this fails on a supported dev machine, `npm i -g @clidable/cli` is
+    // broken there in exactly the way the shim's error message describes.
     const key = `${process.platform}-${process.arch}`;
     expect(TARGETS.map((t) => t.platform)).toContain(key);
   });
@@ -59,14 +59,31 @@ describe("npm wrapper", () => {
     expect(Object.keys(deps).sort()).toEqual(
       TARGETS.map((t) => `@clidable/${t.platform}`).sort(),
     );
-    // Pinned exactly: a range would let `npm i -g clidable` pair the wrapper
-    // with a mismatched binary.
+    // Pinned exactly: a range would let `npm i -g @clidable/cli` pair the
+    // wrapper with a mismatched binary.
     for (const v of Object.values(deps)) expect(v).toBe(w.version);
   });
 
   test("exposes the one command users type", () => {
-    // The naming contract: `clidable` is the command everywhere.
+    // The naming contract: `clidable` is the command everywhere. It comes from
+    // this key, NOT from the package name — which is why the scoped rename
+    // below left what users type untouched.
     expect(wrapperManifest().bin).toEqual({ clidable: "bin/clidable.js" });
+  });
+
+  test("is published under the scoped name, not the bare one", () => {
+    // npm's typosquat filter 403s the bare `clidable` (one edit from the
+    // existing `cli-table` once normalized), so the wrapper is scoped. Pinned
+    // because reverting it looks harmless and fails only at publish time,
+    // after the six platform packages have already gone out.
+    expect(wrapperManifest().name).toBe("@clidable/cli");
+    expect(WRAPPER).toBe("@clidable/cli");
+  });
+
+  test("the staged wrapper is reachable from its package name", () => {
+    // publish-release derives the staging directory as `name.split("/")`, so a
+    // wrapper name without a slash would send `npm publish` at the wrong path.
+    expect(WRAPPER.split("/")).toHaveLength(2);
   });
 
   test("is not marked private (the repo's own package.json is)", () => {

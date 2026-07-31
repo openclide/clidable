@@ -155,13 +155,13 @@ async function main(): Promise<void> {
 
   // ---- publish ----------------------------------------------------------
   // Platform packages first: the wrapper pins them at this exact version, so
-  // publishing it first leaves a window where `npm i -g clidable` resolves a
-  // wrapper whose binaries don't exist yet.
+  // publishing it first leaves a window where `npm i -g @clidable/cli` resolves
+  // a wrapper whose binaries don't exist yet.
   say(`\n→ publishing to npm`);
   for (const pkg of packageNames()) {
-    const dir = pkg.startsWith("@clidable/")
-      ? join(staged, "@clidable", pkg.slice("@clidable/".length))
-      : join(staged, "clidable");
+    // Every package is scoped, and the staging tree mirrors the names, so the
+    // directory is just the name split on its slash.
+    const dir = join(staged, ...pkg.split("/"));
 
     if (await capture(["npm", "view", `${pkg}@${version}`, "version"])) {
       say(`  = ${pkg}@${version} already published, skipping`);
