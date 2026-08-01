@@ -52,8 +52,9 @@ export interface RunDelegateInput {
   projectPath: string;
   /** Nesting depth of THIS call (0 at the top level). */
   depth: number;
-  /** Run the agent's write-capable recipe (roles that produce files). Refused
-   *  when the recipe has no `writeArgs` — never silently downgraded. */
+  /** Run the agent with write access to the workspace (roles that produce
+   *  files). Agents whose default invocation is sandboxed define a `writeArgs`
+   *  escalation; the rest already write, and fall back to their default argv. */
   write?: boolean;
   /** Role id the delegate is playing. Resolved against the project's config and
    *  prepended to `prompt` as the specialist's persona. Unknown ids are refused
@@ -153,15 +154,13 @@ export async function prepareDelegate(
         `re-run: clidable team delegate ${agent} --role ${role.id} --write "…"`,
     );
   }
-  if ((write || role?.needsWrite) && !recipe.writeArgs) {
-    // Refuse rather than silently run read-only: a role that saves files
-    // (Image Creator) would otherwise "succeed" with nothing written.
-    throw delegateError(
-      "DELEGATE_UNSUPPORTED",
-      `"${recipe.name}" has no write-capable invocation — assign ` +
-        `${role ? `the "${role.name}" role` : "this role"} to an agent that does (e.g. codex)`,
-    );
-  }
+  // No capability gate on `write`. `writeArgs` marks agents whose DEFAULT
+  // invocation is deliberately sandboxed (codex `--sandbox read-only`) and so
+  // need a second one to escalate — it is NOT a statement that other agents
+  // can't write. Most run their normal agent loop and write files perfectly
+  // well, so refusing them was wrong. buildArgv falls back to the default argv
+  // when there's no escalation to make; if an agent genuinely can't write, it
+  // says so in its own output and the lead relays that.
 
   const trimmed = prompt.trim();
   if (!trimmed) {

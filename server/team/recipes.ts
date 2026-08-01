@@ -156,8 +156,10 @@ export const BUILTIN_RECIPES: Partial<Record<DelegateAgentId, AgentRecipe>> = {
 
 /** Substitute the prompt into a recipe's argv template — pure, no shell. In
  *  "stdin" mode the prompt is fed via stdin instead, so the template is
- *  unchanged. `write` picks the write-capable template; callers must have
- *  verified `recipe.writeArgs` exists (prepareDelegate refuses otherwise). */
+ *  unchanged. `write` picks the escalated template when the recipe defines one,
+ *  and otherwise falls back to the default argv: `writeArgs` exists only for
+ *  agents whose default is deliberately sandboxed, so its absence means the
+ *  normal invocation already writes, not that writing is impossible. */
 export function buildArgv(recipe: AgentRecipe, prompt: string, write = false): string[] {
   const template = write && recipe.writeArgs ? recipe.writeArgs : recipe.args;
   if (recipe.promptInput === "stdin") return [...template];

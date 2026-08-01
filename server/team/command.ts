@@ -34,8 +34,8 @@ const HELP = `clidable team — delegate work to another coding agent
 
   --role    give the delegate a role's instructions (see \`roles\`). Without it
             the agent gets the bare task and behaves generically
-  --write   run the agent's write-capable recipe (roles that save files, e.g.
-            the Image Creator) — refused for agents without one
+  --write   give the delegate write access to the workspace (roles that save
+            files, e.g. the Image Creator)
 
 agents: codex, claude, antigravity, opencode, copilot, kimi, cursor, qwen
 delegate/status/result/cancel run inside Clidable (server must be up);

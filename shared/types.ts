@@ -1146,9 +1146,9 @@ export interface DelegateRequest {
    *  blocking for the answer). Long tasks need this — the lead's own bash call
    *  would otherwise time out. */
   background?: boolean;
-  /** Give the delegate WRITE access to the workspace (its recipe's `writeArgs`
-   *  invocation). Refused when the agent's recipe has none. Needed by roles
-   *  that produce files (e.g. Image Creator saving PNGs). */
+  /** Give the delegate WRITE access to the workspace. Uses the recipe's
+   *  `writeArgs` escalation where one exists, and the default argv otherwise.
+   *  Needed by roles that produce files (e.g. Image Creator saving PNGs). */
   write?: boolean;
   /** Which role the delegate is playing, as a role id. The server looks it up in
    *  the project's config and prepends that role's `promptTemplate` to `prompt`,
@@ -1233,9 +1233,12 @@ export interface AgentRecipe {
   args: string[];
   /** Alternative argv used when the delegation asks for WRITE access to the
    *  workspace (`clidable team delegate --write`, roles with `needsWrite`) —
-   *  e.g. codex with `--sandbox workspace-write` instead of read-only. Absent
-   *  means the agent has no vetted write-capable invocation: `--write`
-   *  delegations to it are refused rather than silently run read-only. */
+   *  e.g. codex with `--sandbox workspace-write` instead of read-only.
+   *
+   *  Only needed by agents whose DEFAULT invocation is deliberately sandboxed.
+   *  Absent means there is nothing to escalate to — the normal invocation
+   *  already writes — NOT that the agent can't write. Don't read it as a
+   *  capability flag; most of these agents edit files as their day job. */
   writeArgs?: string[];
   /** Extra env for the spawned process (on top of the server's env). For
    *  agent-specific needs like a workspace-trust or telemetry-opt-out flag. */
@@ -1316,10 +1319,11 @@ export interface TeamRole {
   enabled: boolean;
   /** User-defined (vs a built-in seed). */
   isCustom: boolean;
-  /** This role's delegations need WRITE access to the workspace (the rendered
-   *  skill adds `--write`, and the handler runs its write-capable recipe —
-   *  e.g. codex `--sandbox workspace-write` so the Image Creator can save
-   *  files). Only meaningful for handlers whose recipe defines `writeArgs`. */
+  /** This role's delegations need WRITE access to the workspace: the rendered
+   *  skill adds `--write`, so a self-sandboxing handler escalates (codex
+   *  `--sandbox workspace-write`) and the Image Creator can save its PNG. Any
+   *  handler can serve such a role — the ones without a `writeArgs` escalation
+   *  already write by default. */
   needsWrite?: boolean;
 }
 

@@ -200,7 +200,7 @@ clidable team sync
 
 - `delegate` runs the agent non-interactively on the prompt (read-only sandbox where the agent supports one) and prints its answer. With `--background` it returns a job ID immediately.
 - `--role <id>` gives the delegate that role's instructions: the server looks the role up in this project's config and prepends its prompt to yours, so a `reviewer` and an `architect` running on the same agent behave differently. The skills that `sync` installs already pass it. Without it the agent gets your bare prompt. An unknown id is refused rather than ignored — run `clidable team sync` if a skill and the config have drifted.
-- `--write` gives the delegate write access to the workspace, for roles that save files (e.g. Image Creator). Refused for agents with no write-capable invocation, never silently downgraded.
+- `--write` gives the delegate write access to the workspace, for roles that save files (e.g. Image Creator). Agents that sandbox themselves by default (Codex, Antigravity) switch to a write-capable invocation; the rest already write and run as normal.
 - `status` lists all jobs (or details one), `result` prints a finished job's answer, `cancel` stops a running one. With no job ID, `result`/`cancel` target the most relevant job.
 - `roles` prints the role library and what's enabled for this project; `sync` reconciles enabled roles into the project's skill folders (installs enabled, prunes disabled/removed).
 
