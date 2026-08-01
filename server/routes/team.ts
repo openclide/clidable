@@ -18,7 +18,7 @@ import { runDelegate, DELEGATE_ERROR_STATUS, type DelegateErrorCode } from "../t
 import { jobManager } from "../team/jobs";
 import { BUILTIN_RECIPES } from "../team/recipes";
 import { loadRoles, saveRoles } from "../team/config";
-import { coerceRoles, roleInstalledBuckets, syncRole, syncRoles, uninstallRole } from "../team/roles";
+import { coerceRoles, roleSkillState, syncRole, syncRoles, uninstallRole } from "../team/roles";
 import type {
   DelegateAgentId,
   DelegateRequest,
@@ -75,6 +75,9 @@ export async function teamDelegateHandler(req: Request): Promise<Response> {
     projectPath: body.projectPath,
     depth: coerceDepth(body.depth),
     write: body.write === true,
+    // Resolved (and refused, if unknown) in prepareDelegate — the one seam both
+    // the foreground and background paths pass through.
+    role: typeof body.role === "string" && body.role ? body.role : undefined,
   };
 
   try {
@@ -143,17 +146,20 @@ export async function teamCancelHandler(req: Request): Promise<Response> {
 
 /* ---------------------------------- roles --------------------------------- */
 
-/** role id → buckets its skill is installed in on disk — drives the GUI's
- *  per-role install/remove diffs. */
-async function installedMap(
+/** role id → where its skill is installed, and where that install is outdated —
+ *  drives the GUI's per-role install/remove/update diffs. Read once per role:
+ *  installed and stale come from the same file read. */
+async function skillStateMaps(
   projectPath: string,
   roles: TeamRole[],
-): Promise<TeamRolesResponse["installed"]> {
-  return Object.fromEntries(
-    await Promise.all(
-      roles.map(async (r) => [r.id, await roleInstalledBuckets(projectPath, r.id)] as const),
-    ),
+): Promise<Pick<TeamRolesResponse, "installed" | "stale">> {
+  const entries = await Promise.all(
+    roles.map(async (r) => [r.id, await roleSkillState(projectPath, r)] as const),
   );
+  return {
+    installed: Object.fromEntries(entries.map(([id, s]) => [id, s.installed])),
+    stale: Object.fromEntries(entries.map(([id, s]) => [id, s.stale])),
+  };
 }
 
 export async function teamRolesHandler(req: Request): Promise<Response> {
@@ -165,7 +171,7 @@ export async function teamRolesHandler(req: Request): Promise<Response> {
     ok: true,
     roles,
     agents: delegateAgents(),
-    installed: await installedMap(projectPath, roles),
+    ...(await skillStateMaps(projectPath, roles)),
   };
   return Response.json(res);
 }
@@ -192,7 +198,7 @@ export async function teamRolesSaveHandler(req: Request): Promise<Response> {
     ok: true,
     roles,
     agents: delegateAgents(),
-    installed: await installedMap(projectPath, roles),
+    ...(await skillStateMaps(projectPath, roles)),
   };
   return Response.json(res);
 }

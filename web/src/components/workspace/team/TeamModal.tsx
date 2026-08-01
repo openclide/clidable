@@ -28,6 +28,9 @@ export function TeamModal({ open, onClose, projectPath }: Props) {
   const [syncing, setSyncing] = useState(false);
   // Per role id → buckets its skill is installed in on disk (drives Apply diffs).
   const [installed, setInstalled] = useState<Record<string, SkillBucket[]>>({});
+  // Subset of `installed` whose file was rendered by an older Clidable. Kept
+  // separate so Apply can offer an UPDATE on a role that is otherwise in sync.
+  const [stale, setStale] = useState<Record<string, SkillBucket[]>>({});
 
   // Load the project's roles + install state whenever the modal opens.
   useEffect(() => {
@@ -40,6 +43,7 @@ export function TeamModal({ open, onClose, projectPath }: Props) {
         if (!alive) return;
         setRoles(r.roles);
         setInstalled(r.installed);
+        setStale(r.stale ?? {});
       })
       .catch((e) => alive && setError(errMsg(e)))
       .finally(() => alive && setLoading(false));
@@ -118,10 +122,26 @@ export function TeamModal({ open, onClose, projectPath }: Props) {
         saveTimer.current = null;
       }
       await saveTeamRoles(projectPath, rolesRef.current);
-      await syncTeamRoles(projectPath, roleId);
-      const role = rolesRef.current.find((r) => r.id === roleId);
-      const buckets = role?.enabled ? bucketsForAgents(role.enabledForLeads) : [];
-      setInstalled((prev) => ({ ...prev, [roleId]: buckets }));
+      const res = await syncTeamRoles(projectPath, roleId);
+
+      // Re-read state from disk rather than assuming the desired set landed.
+      // syncRole SKIPS any bucket where a hand-written skill already owns the
+      // path, so optimistically marking the role installed showed it live
+      // somewhere it deliberately wasn't — and threw away the reason with the
+      // response. One extra request buys correctness in every branch,
+      // including partial success.
+      const fresh = await fetchTeamRoles(projectPath);
+      setInstalled(fresh.installed);
+      setStale(fresh.stale ?? {});
+
+      const skipped = res.results.find((r) => r.role === roleId)?.skipped ?? [];
+      if (skipped.length) {
+        setError(
+          `Kept ${skipped.length === 1 ? "an existing skill" : `${skipped.length} existing skills`} ` +
+            `Clidable didn't write: ${skipped.join(", ")}. ` +
+            `Rename or remove ${skipped.length === 1 ? "it" : "them"} to let this role install there.`,
+        );
+      }
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -165,6 +185,7 @@ export function TeamModal({ open, onClose, projectPath }: Props) {
             applying={syncing}
             applyError={error}
             installedBuckets={installed[selected.id] ?? []}
+            staleBuckets={stale[selected.id] ?? []}
           />
         </div>
       ) : (

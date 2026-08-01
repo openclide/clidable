@@ -17,8 +17,10 @@ import { AGENTS, resolveBin } from "../agents";
 import { pathWithClidableBin } from "../cli-shim";
 import { resolveCwd } from "../pty/session";
 import { BUILTIN_RECIPES, buildArgv, extractAnswer } from "./recipes";
+import { loadRoles } from "./config";
+import { composeDelegatePrompt } from "./roles";
 import { AGENT_INSTALL_DOCS } from "../../shared/types";
-import type { AgentRecipe, DelegateAgentId, TerminalAgentId } from "../../shared/types";
+import type { AgentRecipe, DelegateAgentId, TeamRole, TerminalAgentId } from "../../shared/types";
 
 /** Refuse delegation nested deeper than this — a fork-bomb backstop for a
  *  delegate that keeps calling `clidable team delegate`. Depth crosses the
@@ -33,13 +35,15 @@ export type DelegateErrorCode =
   | "DELEGATE_TOO_DEEP"
   | "DELEGATE_UNSUPPORTED"
   | "DELEGATE_NO_PROMPT"
-  | "AGENT_NOT_FOUND";
+  | "AGENT_NOT_FOUND"
+  | "ROLE_NOT_FOUND";
 
 export const DELEGATE_ERROR_STATUS: Record<DelegateErrorCode, number> = {
   DELEGATE_TOO_DEEP: 429,
   DELEGATE_UNSUPPORTED: 400,
   DELEGATE_NO_PROMPT: 400,
   AGENT_NOT_FOUND: 404,
+  ROLE_NOT_FOUND: 404,
 };
 
 export interface RunDelegateInput {
@@ -51,6 +55,11 @@ export interface RunDelegateInput {
   /** Run the agent's write-capable recipe (roles that produce files). Refused
    *  when the recipe has no `writeArgs` — never silently downgraded. */
   write?: boolean;
+  /** Role id the delegate is playing. Resolved against the project's config and
+   *  prepended to `prompt` as the specialist's persona. Unknown ids are refused
+   *  rather than ignored: silently dropping it is the failure mode this whole
+   *  parameter exists to fix. */
+  role?: string;
 }
 
 export interface RunDelegateResult {
@@ -87,6 +96,23 @@ function resolveRecipe(agent: DelegateAgentId): AgentRecipe | undefined {
   return BUILTIN_RECIPES[agent];
 }
 
+/** Look up one role in the project's config. Enabled-ness is deliberately NOT
+ *  checked: `enabled` governs whether the skill is installed for a lead, not
+ *  whether the role's instructions are valid — refusing here would break a
+ *  delegation the lead was legitimately told to make. */
+async function resolveRole(projectPath: string, roleId: string): Promise<TeamRole> {
+  const roles = await loadRoles(projectPath);
+  const role = roles.find((r) => r.id === roleId);
+  if (!role) {
+    throw delegateError(
+      "ROLE_NOT_FOUND",
+      `unknown role "${roleId}" in this project — run \`clidable team sync\` to reinstall the role skills, ` +
+        `or drop --role to delegate without one. Known roles: ${roles.map((r) => r.id).join(", ")}`,
+    );
+  }
+  return role;
+}
+
 /**
  * Validate + resolve a delegation into a concrete spawn plan. Throws (with a
  * `code`) for the depth guard, an unknown agent, an empty prompt, or a missing
@@ -109,12 +135,31 @@ export async function prepareDelegate(
   if (!recipe) {
     throw delegateError("DELEGATE_UNSUPPORTED", `AI Team can't delegate to "${agent}" yet`);
   }
-  if (write && !recipe.writeArgs) {
+
+  // Resolve the role BEFORE spawning, so a stale `--role` in a skill file fails
+  // loudly here instead of quietly running a personaless agent. Roles come from
+  // the project's own config, which is also what rendered the skill that named
+  // this id — a mismatch means the two drifted and `clidable team sync` fixes it.
+  const role = input.role ? await resolveRole(projectPath, input.role) : null;
+
+  // A role that SAVES FILES must not run in the read-only sandbox. The delegate
+  // would generate its output, fail to write it, and still exit 0 — a success
+  // the lead relays while nothing landed on disk. The rendered skill always
+  // passes --write for these, so reaching here means it was dropped by hand.
+  if (role?.needsWrite && !write) {
+    throw delegateError(
+      "DELEGATE_UNSUPPORTED",
+      `the "${role.name}" role saves files and must be delegated with --write — ` +
+        `re-run: clidable team delegate ${agent} --role ${role.id} --write "…"`,
+    );
+  }
+  if ((write || role?.needsWrite) && !recipe.writeArgs) {
     // Refuse rather than silently run read-only: a role that saves files
     // (Image Creator) would otherwise "succeed" with nothing written.
     throw delegateError(
       "DELEGATE_UNSUPPORTED",
-      `"${recipe.name}" has no write-capable invocation — assign this role to an agent that does (e.g. codex)`,
+      `"${recipe.name}" has no write-capable invocation — assign ` +
+        `${role ? `the "${role.name}" role` : "this role"} to an agent that does (e.g. codex)`,
     );
   }
 
@@ -122,6 +167,8 @@ export async function prepareDelegate(
   if (!trimmed) {
     throw delegateError("DELEGATE_NO_PROMPT", "a prompt is required");
   }
+
+  const finalPrompt = role ? composeDelegatePrompt(role, trimmed) : trimmed;
 
   const binPath = await resolveBin(recipe.bin);
   if (!binPath) {
@@ -137,7 +184,7 @@ export async function prepareDelegate(
   return {
     recipe,
     binPath,
-    argv: buildArgv(recipe, trimmed, write),
+    argv: buildArgv(recipe, finalPrompt, write),
     cwd: resolveCwd(projectPath),
     env: {
       ...process.env,
@@ -155,7 +202,7 @@ export async function prepareDelegate(
     },
     // "arg" mode closes stdin (/dev/null — the </dev/null Codex needs); "stdin"
     // mode feeds the prompt and closes.
-    stdin: recipe.promptInput === "stdin" ? new TextEncoder().encode(trimmed) : "ignore",
+    stdin: recipe.promptInput === "stdin" ? new TextEncoder().encode(finalPrompt) : "ignore",
   };
 }
 

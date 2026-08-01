@@ -34,9 +34,11 @@ export function AddCustomForm({ onCreate }: Props) {
           description: description.trim(),
           glyph,
           triggerHint: triggerHint.trim(),
-          promptTemplate:
-            prompt.trim() ||
-            `You are a specialist for ${name.trim()}. ${triggerHint.trim()}`,
+          // Delegate-facing: this text is sent TO the teammate ahead of the
+          // task, so the fallback addresses it directly. The triggerHint is
+          // deliberately not appended — it's third-person prose written for the
+          // lead to match against, and reads wrong as an instruction.
+          promptTemplate: prompt.trim() || `You are a specialist in ${name.trim()}.`,
           handlerAgent: handler,
           enabledForLeads: leads,
           enabled: true,
@@ -124,7 +126,7 @@ export function AddCustomForm({ onCreate }: Props) {
           type="text"
           value={triggerHint}
           onChange={(e) => setTriggerHint(e.target.value)}
-          placeholder="Use when writing marketing copy, landing pages, or product positioning."
+          placeholder="Writes marketing copy, landing pages, and product positioning. Use when drafting a launch announcement, rewriting a headline, or when the user asks for the Marketer."
           className="
             w-full rounded-xl
             border border-white/[0.08] bg-white/[0.03]

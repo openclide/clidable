@@ -19,6 +19,8 @@ interface Props {
   applyError?: string | null;
   /** Buckets the role's skill is currently installed in (on disk). */
   installedBuckets?: SkillBucket[];
+  /** Installed buckets whose file was written by an older Clidable. */
+  staleBuckets?: SkillBucket[];
 }
 
 export function RoleDetail({
@@ -29,6 +31,7 @@ export function RoleDetail({
   applying,
   applyError,
   installedBuckets = [],
+  staleBuckets = [],
 }: Props) {
   // Diff what's checked (desired = enabled role's lead buckets) against what's
   // installed on disk — drives the Apply button + subtext, exactly like Skills.
@@ -37,7 +40,9 @@ export function RoleDetail({
   const installedSet = new Set(installedBuckets);
   const toInstall = desired.filter((b) => !installedSet.has(b));
   const toRemove = installedBuckets.filter((b) => !desiredSet.has(b));
-  const changed = toInstall.length > 0 || toRemove.length > 0;
+  // Stale buckets we're KEEPING need a rewrite; ones being removed anyway don't.
+  const toUpdate = staleBuckets.filter((b) => desiredSet.has(b));
+  const changed = toInstall.length > 0 || toRemove.length > 0 || toUpdate.length > 0;
   const fresh = installedBuckets.length === 0;
 
   return (
@@ -154,7 +159,15 @@ export function RoleDetail({
               {applyError ? (
                 <span className="text-red-400/80">{applyError}</span>
               ) : (
-                applyStatus({ enabled: role.enabled, changed, fresh, toInstall, toRemove, installedBuckets })
+                applyStatus({
+                  enabled: role.enabled,
+                  changed,
+                  fresh,
+                  toInstall,
+                  toRemove,
+                  toUpdate,
+                  installedBuckets,
+                })
               )}
             </span>
             <button
@@ -171,19 +184,25 @@ export function RoleDetail({
                 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30
               "
             >
-              {applying ? "Applying…" : fresh && toInstall.length > 0 ? "Install" : "Apply changes"}
+              {applying
+                ? "Applying…"
+                : fresh && toInstall.length > 0
+                  ? "Install"
+                  : !toInstall.length && !toRemove.length && toUpdate.length
+                    ? "Update"
+                    : "Apply changes"}
             </button>
           </div>
         )}
       </Section>
 
-      <Section title="Prompt">
+      <Section title="Sent to the teammate">
         {role.isCustom ? (
           <EditableTextarea
             value={role.promptTemplate}
             onChange={(promptTemplate) => onPatch({ promptTemplate })}
             rows={6}
-            placeholder="The persona / instructions written into the teammate's prompt…"
+            placeholder="Instructions for the teammate doing the work — write them as if speaking to it…"
             className="font-mono text-[11.5px] leading-[1.65] text-foreground/80"
           />
         ) : (
@@ -240,6 +259,7 @@ function applyStatus(d: {
   fresh: boolean;
   toInstall: SkillBucket[];
   toRemove: SkillBucket[];
+  toUpdate: SkillBucket[];
   installedBuckets: SkillBucket[];
 }): string {
   const n = (k: number) => `${k} bucket${k === 1 ? "" : "s"}`;
@@ -253,7 +273,10 @@ function applyStatus(d: {
       return `Apply: install ${n(d.toInstall.length)}, remove ${n(d.toRemove.length)}.`;
     }
     if (d.toInstall.length) return `Apply installs into ${n(d.toInstall.length)}.`;
-    return `Apply removes from ${n(d.toRemove.length)}.`;
+    if (d.toRemove.length) return `Apply removes from ${n(d.toRemove.length)}.`;
+    // Only staleness left: the skill is installed everywhere it should be, but
+    // was written by an older Clidable and no longer matches what we'd render.
+    return `Out of date in ${n(d.toUpdate.length)} — Apply rewrites the skill.`;
   }
   if (d.fresh) return "Not installed yet — Apply to install.";
   return `Up to date — installed in ${n(d.installedBuckets.length)}.`;

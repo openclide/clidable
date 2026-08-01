@@ -632,16 +632,35 @@ export type SkillBucket = "claude" | "universal" | "aider" | "qwen";
  *  projects). Mirrors skills.sh's `-g/--global` flag. */
 export type SkillScope = "project" | "global";
 
-/** Which of our agents read each bucket's directory. Drives the per-agent
- *  dots/matrix. `aider` maps to nothing because Clidable's agent set has no
- *  Aider entry yet. */
+/**
+ * Which lead agents read each bucket's directory. Drives the per-agent
+ * dots/matrix. `aider` maps to nothing because Clidable's agent set has no Aider
+ * entry yet.
+ *
+ * Load-bearing: if a bucket's directory isn't actually read by its agents, every
+ * skill Clidable installs for them is inert. Re-verified 2026-08-01 against each
+ * vendor's own documentation (not against the `skills` CLI, which only proves
+ * where it WRITES) — all six universal agents read a PROJECT-level
+ * `.agents/skills/`:
+ *
+ *   codex       developers.openai.com/codex/skills — $CWD, parents, $REPO_ROOT
+ *   opencode    opencode.ai/docs/skills — plus .opencode/skills, .claude/skills
+ *   antigravity Google codelabs (agy) — legacy .gemini/skills was MOVED here
+ *   copilot     docs.github.com …/copilot-cli/customize-copilot/add-skills
+ *   cursor      cursor.com/docs/context/skills
+ *   kimi        moonshotai.github.io/kimi-code — project root beats ~/.agents
+ *
+ * Cursor carried a CLI bug (forum #155358) where the `/` menu scanned only
+ * .cursor/skills; Cursor staff confirmed the agent-context loader read
+ * .agents/skills correctly throughout, and it shipped fixed in March 2026. It
+ * never affected us either way — role skills are description-triggered, never
+ * picked from the slash menu.
+ */
 export const SKILL_BUCKET_AGENTS: Record<SkillBucket, TerminalAgentId[]> = {
   claude: ["claude"],
-  // Kimi reads `.agents/skills` too (verified: `skills add -a kimi-cli` writes
-  // the same dir as codex), so it rides the universal bucket. Antigravity CLI
-  // (`agy`) reads the same `.agents/skills` Agent Skills dir.
   universal: ["codex", "cursor", "antigravity", "opencode", "copilot", "kimi"],
-  // Qwen Code reads ONLY its own `.qwen/skills`, so it's a bucket of its own.
+  // Qwen Code reads ONLY its own `.qwen/skills` (project) / `~/.qwen/skills`
+  // (personal) — no `.agents/skills` support — so it's a bucket of its own.
   qwen: ["qwen"],
   aider: [],
 };
@@ -1131,6 +1150,12 @@ export interface DelegateRequest {
    *  invocation). Refused when the agent's recipe has none. Needed by roles
    *  that produce files (e.g. Image Creator saving PNGs). */
   write?: boolean;
+  /** Which role the delegate is playing, as a role id. The server looks it up in
+   *  the project's config and prepends that role's `promptTemplate` to `prompt`,
+   *  so the specialist actually receives its persona. Without this the delegate
+   *  gets the lead's bare task and every role behaves identically — the role
+   *  skills' prompts would be text nothing ever reads. */
+  role?: string;
 }
 
 /** Server → lead: the delegate's clean final answer + how the run ended. */
@@ -1266,8 +1291,23 @@ export interface TeamRole {
   glyph: RoleGlyphId;
   /** The SKILL.md frontmatter `description` — what the lead matches against. */
   triggerHint: string;
-  /** Persona prose written into the skill body. */
+  /** The specialist's instructions, sent TO the delegate ahead of the lead's
+   *  task (see composeDelegatePrompt). Delegate-facing: write it as if speaking
+   *  to the teammate doing the work. It is deliberately NOT rendered into the
+   *  skill body — the lead never needs to read its teammate's persona, and
+   *  putting it there both confused the audience and charged the lead's context
+   *  for text it can't act on. */
   promptTemplate: string;
+  /** Optional guidance for the LEAD, rendered into the skill body. For roles
+   *  where writing a good delegation takes more than "describe the task" — the
+   *  Image Creator needs a full art brief plus a destination path. Keep it
+   *  short: the body is a recurring context cost once the skill loads.
+   *
+   *  Currently seeded by the built-in library only — there is deliberately no
+   *  GUI field yet, since the Image Creator is the sole role that has needed
+   *  one. It round-trips through save/load, so adding an editor later needs no
+   *  migration. */
+  leadHint?: string;
   /** Which delegate agent handles this role's work. */
   handlerAgent: DelegateAgentId;
   /** Lead agents this role's skill is installed for. */
@@ -1292,6 +1332,11 @@ export interface TeamRolesResponse {
   /** Per role id → the buckets its skill is currently installed in (on disk),
    *  so the GUI can show install/remove diffs and apply state like Skills. */
   installed: Record<string, SkillBucket[]>;
+  /** Per role id → installed buckets whose SKILL.md no longer matches what
+   *  Clidable would write (an older render). Always a subset of `installed`.
+   *  Without this the GUI can't tell a current install from an outdated one and
+   *  disables Apply on a role whose file still holds the old instructions. */
+  stale: Record<string, SkillBucket[]>;
 }
 
 /** Result of installing one role's skill into its leads' buckets. */

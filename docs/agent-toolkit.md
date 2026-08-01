@@ -60,10 +60,12 @@ The headline feature for multi-agent work: **your lead agent delegates to other 
 You enable roles for a project — say **Reviewer** (handled by Codex) and **UI Designer** (handled by Claude). Clidable installs each enabled role as a *skill* in your lead agent's skill folder. Now, when you ask your lead agent (e.g. Claude Code) to "get the architecture reviewed", it recognizes the Reviewer skill and runs:
 
 ```bash
-clidable team delegate codex "«the full review prompt»"
+clidable team delegate codex --role reviewer "«the full review prompt»"
 ```
 
 …which spawns Codex non-interactively (read-only sandbox), captures its answer, and returns it to the lead agent's context. One conversation, several specialized minds.
+
+`--role` is what makes the teammate a *specialist*: the server looks that role up in the project's config and prepends its instructions to the prompt, so a Reviewer and an Architect running on the same Codex binary behave differently. The installed skills pass it automatically.
 
 ### Built-in roles
 
@@ -77,6 +79,7 @@ clidable team delegate codex "«the full review prompt»"
 | Security Auditor | Antigravity | Vulnerability scanning, threat modeling |
 | Performance | Codex | Bottleneck analysis, profiling, optimization |
 | Documenter | Claude | Docs, comments, READMEs, API descriptions |
+| Image Creator | Codex | PNG/image assets — icons, illustrations, social images |
 
 All roles start disabled; you can change any role's handler agent, edit it, or add **custom roles** of your own.
 

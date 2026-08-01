@@ -6,7 +6,8 @@
  * Clidable server: the server owns the delegate process. So the server must be
  * up — which it always is when the lead is running inside Clidable.
  *
- *   delegate <agent> <prompt…> [--background]   run an agent on a prompt
+ *   delegate <agent> [--role <id>] <prompt…>    run an agent on a prompt, with
+ *                       [--background] [--write]   that role's instructions
  *   status [job]                                list jobs, or show one
  *   result [job]                                print a finished job's answer
  *   cancel [job]                                cancel a running job
@@ -23,13 +24,16 @@ import type {
 
 const HELP = `clidable team — delegate work to another coding agent
 
-  delegate <agent> <prompt…> [--background] [--write]   run <agent> on <prompt>
+  delegate <agent> [--role <id>] <prompt…> [--background] [--write]
+                                              run <agent> on <prompt>
   status [job]                                list jobs, or show one
   result [job]                                print a finished job's answer
   cancel [job]                                cancel a running job
   roles                                       list the team roles
   sync                                        install role skills into this project
 
+  --role    give the delegate a role's instructions (see \`roles\`). Without it
+            the agent gets the bare task and behaves generically
   --write   run the agent's write-capable recipe (roles that save files, e.g.
             the Image Creator) — refused for agents without one
 
@@ -93,14 +97,63 @@ async function api<T>(method: "GET" | "POST", path: string, body?: unknown): Pro
 
 /* ------------------------------- commands -------------------------------- */
 
+/**
+ * Split the delegate argv into flags + agent + prompt. Hand-rolled rather than
+ * `filter`ed because `--role` takes a VALUE: dropping the flag alone would leave
+ * the role id sitting at the head of the prompt (or, worse, read as the agent).
+ * Both `--role x` and `--role=x` are accepted — a lead writing the command by
+ * hand will use either.
+ */
+export function parseDelegateArgs(args: string[]): {
+  background: boolean;
+  write: boolean;
+  role?: string;
+  agent?: string;
+  prompt: string;
+  /** Set when `--role` was given but its value is missing or is another flag.
+   *  Callers must FAIL on this rather than proceed: silently continuing without
+   *  a role runs a personaless delegate, which is the failure `--role` exists to
+   *  prevent — and it looks like success. */
+  roleError?: string;
+} {
+  let background = false;
+  let write = false;
+  let role: string | undefined;
+  let roleError: string | undefined;
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    if (a === "--background") background = true;
+    else if (a === "--write") write = true;
+    else if (a === "--role") {
+      const next = args[i + 1];
+      // `--role --write x` must not swallow `--write` as the role id: that
+      // silently drops BOTH the persona and the write sandbox.
+      if (next === undefined || next.startsWith("-")) {
+        roleError = next === undefined ? "--role needs a role id" : `--role needs a role id, got "${next}"`;
+      } else {
+        role = next;
+        i += 1;
+      }
+    } else if (a.startsWith("--role=")) {
+      const v = a.slice("--role=".length);
+      if (v) role = v;
+      else roleError = "--role needs a role id";
+    } else rest.push(a);
+  }
+  return { background, write, role, roleError, agent: rest[0], prompt: rest.slice(1).join(" ").trim() };
+}
+
 async function delegate(args: string[]): Promise<number> {
-  const background = args.includes("--background");
-  const write = args.includes("--write");
-  const rest = args.filter((a) => a !== "--background" && a !== "--write");
-  const agent = rest[0];
-  const prompt = rest.slice(1).join(" ").trim();
+  const { background, write, role, roleError, agent, prompt } = parseDelegateArgs(args);
+  if (roleError) {
+    console.error(`team delegate: ${roleError}. Run \`clidable team roles\` to list them.`);
+    return 1;
+  }
   if (!agent || !prompt) {
-    console.error("usage: clidable team delegate <agent> <prompt…> [--background] [--write]");
+    console.error(
+      "usage: clidable team delegate <agent> [--role <id>] <prompt…> [--background] [--write]",
+    );
     return 1;
   }
 
@@ -111,6 +164,7 @@ async function delegate(args: string[]): Promise<number> {
     depth: Number(process.env.CLIDABLE_DELEGATE_DEPTH ?? "0") || 0,
     background,
     write,
+    role,
   };
 
   if (background) {
