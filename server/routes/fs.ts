@@ -16,6 +16,7 @@
 import { realpath, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve, sep } from "node:path";
+import { cachedDrives } from "../util/fs";
 import type { FsBrowseEntry, FsBrowseResponse } from "../../shared/types";
 
 const MAX_READ_BYTES = 1024 * 1024; // 1 MiB
@@ -235,6 +236,10 @@ export async function fsBrowseHandler(req: Request): Promise<Response> {
   // opens next to what you were working on. Home remains the fallback, and the
   // "⌂ Home" button navigates to `home` explicitly, so it still works.
   const target = raw && raw.length > 0 ? resolve(raw) : (cwd ?? home);
+  // Kicked off HERE, not awaited in the response literal: the probe is
+  // independent of the directory work below, so overlapping them keeps its
+  // latency (up to PROBE_TIMEOUT_MS on a cold cache) off the picker's first paint.
+  const drives = cachedDrives();
 
   let abs: string;
   try {
@@ -247,7 +252,20 @@ export async function fsBrowseHandler(req: Request): Promise<Response> {
   try {
     entries = await readdir(abs, { withFileTypes: true });
   } catch (err) {
-    return forbidden(`cannot list directory: ${(err as Error).message}`);
+    // A FILE path resolves fine and only fails HERE, with ENOTDIR. Pasting one
+    // is common — paths come from editors, stack traces and Explorer's "Copy as
+    // path" — so land in its folder rather than dead-ending. Recovering at the
+    // failure site costs nothing on the common path and leaves no TOCTOU window
+    // that a pre-emptive stat() would.
+    if ((err as NodeJS.ErrnoException).code !== "ENOTDIR") {
+      return forbidden(`cannot list directory: ${(err as Error).message}`);
+    }
+    abs = dirname(abs);
+    try {
+      entries = await readdir(abs, { withFileTypes: true });
+    } catch (err2) {
+      return forbidden(`cannot list directory: ${(err2 as Error).message}`);
+    }
   }
 
   const dirs: FsBrowseEntry[] = [];
@@ -274,6 +292,9 @@ export async function fsBrowseHandler(req: Request): Promise<Response> {
     home,
     cwd,
     dirs,
+    // On Windows the parent chain dead-ends at the current drive root, so the
+    // picker needs these to reach anything on another drive. Empty elsewhere.
+    drives: await drives,
   };
   return Response.json(body);
 }

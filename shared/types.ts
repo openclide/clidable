@@ -591,6 +591,15 @@ export interface FsBrowseResponse {
   path: string;
   /** Parent directory, or null at the filesystem root. */
   parent: string | null;
+  /**
+   * Mounted drive roots (`C:\`, `D:\`, …) on Windows; EMPTY on macOS/Linux.
+   *
+   * Windows has one filesystem root per drive and nothing lists them, so
+   * walking up from `C:\` reaches `C:\` and a picker that only moves up and
+   * down can never leave the drive it started on. These are the sideways
+   * moves; elsewhere `/` already reaches everything, hence the empty array.
+   */
+  drives: string[];
   /** The server's home directory — drives the "⌂ Home" shortcut. */
   home: string;
   /**

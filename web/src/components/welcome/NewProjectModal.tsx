@@ -10,6 +10,7 @@ import { AgentIcon } from "../icons/AgentIcon";
 import { createProject, type Project } from "../../lib/projects-client";
 import { browseDir } from "../../lib/fs-browse-client";
 import { FolderPickerModal } from "../workspace/FolderPickerModal";
+import { joinPath } from "../../lib/path-input";
 import { getAgent, type AgentId } from "./data";
 
 interface Props {
@@ -110,9 +111,31 @@ export function NewProjectModal({ agentId, onClose, onCreated }: Props) {
             Location
           </span>
           <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1 truncate rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 font-mono text-[11px] text-foreground/70">
-              {parentDir ? `${parentDir}/${name.trim() || "…"}` : "Choose a folder…"}
-            </div>
+            {/*
+              Editable, like the folder picker's own bar. Browsing to a location
+              is fine when it's nearby and useless when you already know the
+              path — and on Windows the tree couldn't reach another drive at all,
+              which is what made a read-only field here a dead end.
+            */}
+            <input
+              type="text"
+              value={parentDir ?? ""}
+              onChange={(e) => setParentDir(e.target.value || null)}
+              onFocus={(e) => e.currentTarget.select()}
+              disabled={busy}
+              spellCheck={false}
+              autoComplete="off"
+              aria-label="Parent folder for the new project"
+              placeholder="Choose a folder, or type a path…"
+              className="
+                min-w-0 flex-1 truncate rounded-lg border border-white/[0.06]
+                bg-white/[0.02] px-3 py-2 font-mono text-[11px] text-foreground/70
+                outline-none transition-colors
+                placeholder:text-foreground/30
+                focus:border-accent/40 focus:bg-white/[0.04] focus:text-foreground
+                disabled:opacity-50
+              "
+            />
             <button
               type="button"
               onClick={() => setPickerOpen(true)}
@@ -123,9 +146,14 @@ export function NewProjectModal({ agentId, onClose, onCreated }: Props) {
                 transition-colors hover:bg-white/[0.08] disabled:opacity-40
               "
             >
-              Change…
+              Browse…
             </button>
           </div>
+          {parentDir && (
+            <p className="truncate px-0.5 font-mono text-[10.5px] text-foreground/40">
+              Creates {joinPath(parentDir, name.trim() || "…")}
+            </p>
+          )}
         </div>
 
         {/* Template */}
