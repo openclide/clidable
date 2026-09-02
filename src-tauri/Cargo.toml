@@ -1,6 +1,6 @@
 [package]
 name = "clidable"
-version = "0.1.2"
+version = "0.1.3"
 description = "GUI for CLI coding agents"
 authors = ["Andre Pimenta"]
 license = "Apache-2.0"
