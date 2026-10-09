@@ -36,6 +36,7 @@ tab**.
 or on macOS:
 
 ```sh
+brew trust --cask openclide/tap/clidable-desktop   # Homebrew 6+ asks once
 brew install --cask openclide/tap/clidable-desktop
 ```
 

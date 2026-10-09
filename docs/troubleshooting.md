@@ -81,6 +81,19 @@ The phone can't reach `localhost` *on the server* directly. Clidable normally re
 
 ## Desktop app
 
+**`brew install --cask` says "Refusing to load cask … from untrusted tap"**
+Homebrew 6.0+ requires you to trust a third-party tap's casks before it will
+load them — a tap's code runs on your machine, so this is Homebrew's call, not
+something we can pre-approve. Trust it once:
+```bash
+brew trust --cask openclide/tap/clidable-desktop
+brew install --cask openclide/tap/clidable-desktop
+```
+`brew trust openclide/tap` trusts the whole tap instead, including anything we
+add to it later — narrower is better. The `clidable` **formula** usually
+doesn't ask, because installing by its full `openclide/tap/clidable` name
+trusts it as it goes.
+
 **Windows SmartScreen says "Windows protected your PC"**
 The Windows installer isn't code-signed yet. Click **More info → Run anyway**. (macOS builds are signed and notarized, so they open normally; if a macOS build ever *is* blocked, it means the signature didn't apply — please file an issue rather than working around it with `xattr`.)
 

@@ -129,8 +129,7 @@ cask "clidable-desktop" do
   sha256 arm:   "${need(sums, arm)}",
          intel: "${need(sums, intel)}"
 
-  url "${BASE}/v#{version}/Clidable_#{version}_#{arch}.dmg",
-      verified: "github.com/openclide/clidable/"
+  url "${BASE}/v#{version}/Clidable_#{version}_#{arch}.dmg"
   name "Clidable"
   desc "GUI for CLI coding agents"
   homepage "https://github.com/openclide/clidable"

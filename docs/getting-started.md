@@ -10,7 +10,11 @@ Pick **one** of these — they all end in the same UI.
 
 A native window with OS-level glass, a menu-bar tray showing each agent's live status, and a background server — closing the window keeps your agents running.
 
-- **macOS** — `brew install --cask openclide/tap/clidable-desktop`, or download the `.dmg` (Apple silicon or Intel) from the [Releases page](https://github.com/openclide/clidable/releases).
+- **macOS** — `brew trust --cask openclide/tap/clidable-desktop` then
+  `brew install --cask openclide/tap/clidable-desktop`, or download the `.dmg`
+  (Apple silicon or Intel) from the [Releases page](https://github.com/openclide/clidable/releases).
+  Homebrew 6.0+ refuses casks from third-party taps until you trust them once —
+  it's a one-off per machine, not something we can pre-approve for you.
 - **Windows** — download and run the `Clidable_…-setup.exe` (or `.msi`) installer.
 - **Linux** — grab the `.deb` (Debian/Ubuntu) or `.rpm` (Fedora/RHEL). On other distros, use the `clidable` CLI below — the server binary is self-contained and the browser UI is the full product.
 

@@ -6,7 +6,7 @@ Clidable is one server that serves the UI, the API, and the terminals on a singl
 
 ## Option 1 — The desktop app
 
-The installers from the [Releases page](https://github.com/openclide/clidable/releases) (or `brew install --cask openclide/tap/clidable-desktop` on macOS) give you a self-contained native app — it embeds its own server, so there is nothing else to install.
+The installers from the [Releases page](https://github.com/openclide/clidable/releases) (or `brew trust --cask openclide/tap/clidable-desktop` then `brew install --cask openclide/tap/clidable-desktop` on macOS) give you a self-contained native app — it embeds its own server, so there is nothing else to install.
 
 What the app adds over the browser:
 

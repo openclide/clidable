@@ -10,6 +10,7 @@ The agents still run in their real terminals (their native TUI, full fidelity) â
 
 ```bash
 # macOS
+brew trust --cask openclide/tap/clidable-desktop   # Homebrew 6+ asks once
 brew install --cask openclide/tap/clidable-desktop
 ```
 
