@@ -29,6 +29,8 @@ One Bun process, one port. The same server runs on your laptop, on a VPS, or
 inside the desktop app — and your agents **keep running when you close the
 tab**.
 
+https://github.com/user-attachments/assets/54b4ff52-3b58-47c7-bf31-8839458e3bea
+
 ## Quick start
 
 **Desktop app** — download the installer for macOS, Windows, or Linux from the
