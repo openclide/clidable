@@ -77,7 +77,7 @@ curl http://127.0.0.1:7878/api/health
 
 - CLI server in a terminal: **Ctrl-C**.
 - Background server (the one `clidable open` starts): `clidable stop`.
-- Desktop app: tray → **Quit Clidable**. (`clidable stop` deliberately refuses to kill the app's own server — it would strand the app's windows; use the tray, or `--force` if you really mean it.)
+- Desktop app: **Quit Clidable** — from the tray, or ⌘Q on macOS. That stops the server the app started. If the app attached to a server you started yourself with `clidable`, that one keeps running — it belongs to its terminal. (`clidable stop` deliberately refuses to kill the app's own server — it would strand the app's windows; quit the app instead, or use `--force` if you really mean it.)
 - On a VPS: your service manager — see the [VPS guide](./remote-vps.md#step-3--keep-it-running-systemd).
 
 **Survives a browser disconnect (server keeps running):** everything. Terminal sessions live on the server — close the tab, switch networks, let your phone sleep; reattach and the terminal replays its recent output (up to 256 KB per terminal). A session with **no client at all** for over 10 minutes is *parked*: its process stops, but the session stays in your workspace and **reopening it resumes the agent's conversation** (see below). Keeping a tab attached — even backgrounded or minimized — keeps the session hot.

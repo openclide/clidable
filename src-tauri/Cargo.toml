@@ -28,6 +28,25 @@ tauri-plugin-opener = "2.5"
 # Single-instance: forward a CLI launch (`clidable open <dir>`) into the running
 # app so it opens a window for that directory instead of booting a second app.
 tauri-plugin-single-instance = "2.4"
+# Native dialogs for the one launch decision that needs a human: an OLDER
+# Clidable server is running and replacing it would interrupt agents mid-task
+# or override a server the user started themselves. Rust-side only — no
+# frontend capability needed, since the webview never calls it.
+#
+# PINNED to 2.7.x (`~`, not `^`): 2.8 requires tauri ^2.12, and adding it
+# silently bumped tauri 2.11 → 2.12 and wry 0.55 → 0.57 — whose webview2-com
+# 0.39 no longer unifies with the 0.38 that src/capture.rs is written against,
+# breaking the Windows build (macOS doesn't notice; its capture branch never
+# touches WebView2). An unplanned tauri bump also risks a second
+# window-vibrancy (see the pin below). Move this to 2.8 only as part of a
+# deliberate tauri upgrade that bumps capture.rs's webview2-com/windows too.
+tauri-plugin-dialog = "~2.7"
+# Not used directly — a VERSION CONSTRAINT on the dialog plugin's dependency.
+# Cargo resolves a newly added dependency's subtree at its maximum versions, so
+# without this it picked tauri-plugin-fs 2.7, which requires tauri ^2.12 and
+# dragged 41 packages up with it (the whole tao/wry/tauri-build toolchain).
+# 2.5.x is the newest line that fits our tauri 2.11. Lift alongside the pin above.
+tauri-plugin-fs = "~2.5"
 # Percent-encode a filesystem path into the `?cwd=` deep-link.
 urlencoding = "2.1"
 serde = { version = "1.0", features = ["derive"] }

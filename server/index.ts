@@ -17,8 +17,22 @@ import landing from "../web/landing.html";
 import { parseConfig } from "./cli";
 import { ensureDirs, paths } from "./paths";
 import { ensureClidableShim } from "./cli-shim";
-import { runOpenCommand, runStopCommand } from "./launch/command";
-import { clearLock, serverPort, writeLock } from "./launch/daemon";
+import {
+  runAppQuitCommand,
+  runAttachPlanCommand,
+  runOpenCommand,
+  runStopCommand,
+} from "./launch/command";
+import {
+  attachOutcome,
+  clearLock,
+  lockOwnerFor,
+  planAttach,
+  probeHost,
+  probePort,
+  serverPort,
+  writeLock,
+} from "./launch/daemon";
 import { openDb } from "./db";
 import { setReportPort } from "./pty/hook-report";
 import { agentsHandler } from "./routes/agents";
@@ -135,6 +149,11 @@ import {
     // WITHOUT booting one themselves.
     open: runOpenCommand,
     stop: runStopCommand,
+    // Internal (`__` prefix, never in USAGE): the desktop shell's calls to its
+    // own sidecar — at launch, what to do about whatever holds the port; at
+    // quit, stop the server it owns. See command.ts.
+    "__attach-plan": runAttachPlanCommand,
+    "__app-quit": runAppQuitCommand,
   };
   let hit: { idx: number; tok: string } | null = null;
   for (const tok of [...Object.keys(REEXEC), ...Object.keys(COMMANDS)]) {
@@ -207,6 +226,33 @@ try {
 } catch (e) {
   console.error((e as Error)?.message ?? String(e));
   process.exit(1);
+}
+
+// Find out what holds our port BEFORE touching shared state. openDb() runs
+// migrations against the one clidable.db every version shares, and
+// ensureClidableShim() repoints the `clidable` shim every agent uses — so a
+// newer build that only discovers at bind time that an older server owns the
+// port has already migrated that server's database out from under it and
+// hijacked its shim. Probing first means a process that is going to attach
+// exits having changed nothing.
+{
+  const port = config.port;
+  const state = await probePort(port, { host: probeHost(config.bind) });
+  if (state.kind !== "free") {
+    const owner = lockOwnerFor(port);
+    const plan = planAttach({
+      state,
+      ours: packageJson.version,
+      owner,
+      // A foreground server never replaces another one, so whether that one
+      // has agents running doesn't change what this process does — skip the
+      // request and let the planner treat it as "older" either way.
+      busyAgents: 0,
+    });
+    const out = attachOutcome(plan, port, packageJson.version, owner);
+    console[out.level](out.text);
+    process.exit(out.code);
+  }
 }
 
 ensureDirs();
@@ -291,6 +337,14 @@ try {
   server = serve({
   port: config.port,
   hostname: config.bind,
+  // Exclusive bind, stated explicitly. With `development: false` (every release
+  // build) Bun turns SO_REUSEPORT ON by default, so a second Clidable binds the
+  // SAME port alongside the first instead of failing — the kernel then splits
+  // connections between two servers with separate PTYs and sessions, the
+  // lockfile names whichever booted last, and the EADDRINUSE attach path below
+  // can never fire. Dev mode leaves it off, which is why `bun run dev` never
+  // showed this and every installed binary did.
+  reusePort: false,
 
   // Dev-time conveniences: HMR for the frontend bundle + browser console
   // streamed to the server terminal. Disabled in production.
@@ -469,10 +523,18 @@ try {
 } catch (e) {
   const code = (e as { code?: string })?.code;
   if (code === "EADDRINUSE" || /EADDRINUSE|address already in use|in use/i.test(String((e as Error)?.message ?? e))) {
-    console.log(
-      `[clidable] port ${config.port} is already serving Clidable — attaching to it (not starting a second server).`,
-    );
-    process.exit(0);
+    // Lost a race: the port was free at the probe above and taken by bind time
+    // (most often two Clidables starting at once). Ask again what's there rather
+    // than assume it's us — it may not be Clidable at all.
+    const state = await probePort(config.port, { host: probeHost(config.bind) });
+    const owner = lockOwnerFor(config.port);
+    const plan = planAttach({ state, ours: packageJson.version, owner, busyAgents: 0 });
+    const out =
+      plan.action === "start"
+        ? { level: "error" as const, text: `[clidable] port ${config.port} was briefly in use — try again.`, code: 1 }
+        : attachOutcome(plan, config.port, packageJson.version, owner);
+    console[out.level](out.text);
+    process.exit(out.code);
   }
   throw e;
 }

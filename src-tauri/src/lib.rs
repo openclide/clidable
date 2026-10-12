@@ -3,7 +3,7 @@
 // Intentionally thin: ~95% of the app lives in the Bun server. Tauri's job:
 //   (a) own ONE background server for its lifetime (a sidecar spawned on launch
 //       if none is already up) — so closing a window HIDES it (the app + server
-//       keep running) and only the tray's Quit stops everything;
+//       keep running) and only quitting (the tray's Quit, ⌘Q) stops everything;
 //   (b) open a native window per workspace (multi-window), each a webview onto
 //       the same server via a `?workspace=`/`?cwd=` deep-link;
 //   (c) forward a CLI launch (`clidable open <dir>` → `open -a Clidable --args
@@ -202,13 +202,64 @@ fn adopt_login_shell_path() {
     // is nothing to repair.
 }
 
-/// Spawn the bundled server as a sidecar IF one isn't already up. Plugin-shell
-/// sidecars die with the app (Quit) but survive window-close (the app process
-/// stays alive) — exactly the "background app, server until Quit" model.
-fn ensure_server(app: &AppHandle) {
-    if server_up() {
-        return; // attach to the already-running server
-    }
+/// What a Clidable's `/api/health` reports. Anything that doesn't parse as this
+/// — or parses with a `shell` that isn't ours — is not Clidable.
+#[derive(Deserialize)]
+struct Health {
+    ok: bool,
+    version: String,
+    shell: String,
+}
+
+/// The version of the CLIDABLE answering on `port`, or None if nothing is, or
+/// what's there isn't Clidable. Mirrors `isHealthResponse` in
+/// server/launch/daemon.ts: `shell` is the field that's Clidable's alone, so a
+/// generic `{ ok, version }` endpoint on someone else's server doesn't pass.
+fn running_clidable_version(port: u16) -> Option<String> {
+    let body = loopback_request(
+        port,
+        b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+    )?;
+    let h: Health = serde_json::from_slice(&body).ok()?;
+    (h.ok && !h.version.is_empty() && (h.shell == "server" || h.shell == "tauri-sidecar"))
+        .then_some(h.version)
+}
+
+/// The bundled sidecar's verdict on what holds the port — `__attach-plan` in
+/// server/launch/command.ts, decided by `planAttach` in daemon.ts. Unknown
+/// fields (e.g. `relation`) are ignored.
+#[cfg(not(debug_assertions))]
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "lowercase")]
+enum AttachPlan {
+    Start,
+    Attach,
+    Replace,
+    Ask {
+        running: String,
+        reason: String,
+        busy: Option<u32>,
+    },
+    Refuse,
+}
+
+/// What a launch found and did — the reveal step needs it to decide whether the
+/// hidden window's first load is still valid.
+struct ServerOutcome {
+    /// A server was already answering, so the window's first load reached it.
+    was_up: bool,
+    /// We stopped an older server and started ours: the first load rendered the
+    /// OLD frontend and has to be redone.
+    replaced: bool,
+    /// Something that isn't Clidable holds the port; the app is exiting.
+    quit: bool,
+}
+
+/// Spawn the bundled server as a sidecar. Nothing ties its lifetime to the app
+/// process — the shell plugin only kills children spawned from JavaScript — so
+/// Quit stops it explicitly (`stop_owned_server`), while closing a window, which
+/// only hides it, leaves it running: "background app, server until Quit".
+fn spawn_sidecar(app: &AppHandle) {
     #[cfg(not(debug_assertions))]
     {
         use tauri_plugin_shell::ShellExt;
@@ -228,6 +279,158 @@ fn ensure_server(app: &AppHandle) {
     // Dev: the server is started by `beforeDevCommand` (bun run dev).
     #[cfg(debug_assertions)]
     let _ = app;
+}
+
+/// Run the bundled sidecar as a CLI and return its stdout, or None if it can't
+/// be run or doesn't finish in time. Bounded, because this sits on the path to
+/// the window appearing at all.
+#[cfg(not(debug_assertions))]
+fn sidecar_stdout(app: &AppHandle, args: &[&str], timeout: Duration) -> Option<String> {
+    use tauri_plugin_shell::ShellExt;
+    let cmd = app.shell().sidecar("clidable-server").ok()?.args(args);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let out = tauri::async_runtime::block_on(cmd.output());
+        let _ = tx.send(out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()));
+    });
+    rx.recv_timeout(timeout).ok().flatten()
+}
+
+#[cfg(not(debug_assertions))]
+fn attach_plan(app: &AppHandle) -> Option<AttachPlan> {
+    let out = sidecar_stdout(app, &["__attach-plan"], Duration::from_secs(10))?;
+    // The plan is the last line; anything before it is the sidecar's logging.
+    serde_json::from_str(out.trim().lines().last()?).ok()
+}
+
+/// Stop the older server and start ours. Returns whether that happened — if the
+/// old one won't stop, we attach to it rather than leave the window with no
+/// server at all.
+#[cfg(not(debug_assertions))]
+fn replace_server(app: &AppHandle) -> bool {
+    // The sidecar IS the CLI, so reuse its tested `stop` — lockfile pid, the
+    // pid-reuse guard, stale-lock reclaim — rather than reimplement it here.
+    // `--force` because the server being replaced is (typically) a previous
+    // app's sidecar, which a plain `stop` deliberately refuses.
+    let _ = sidecar_stdout(app, &["stop", "--force"], Duration::from_secs(10));
+    for _ in 0..25 {
+        if !server_up() {
+            spawn_sidecar(app);
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    eprintln!("[clidable] the older server didn't stop; attaching to it instead");
+    false
+}
+
+/// Ask whether to replace an older server, when doing it silently could destroy
+/// work or override a choice the user made. `true` = replace.
+#[cfg(not(debug_assertions))]
+fn confirm_replace(app: &AppHandle, running: &str, reason: &str, busy: Option<u32>) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let ours = env!("CARGO_PKG_VERSION");
+    let why = match (reason, busy) {
+        ("busy-agents", Some(1)) => "An agent is in the middle of a task and would be interrupted.".to_string(),
+        ("busy-agents", Some(n)) => format!("{n} agents are in the middle of a task and would be interrupted."),
+        ("not-app-owned", _) => "It was started from a terminal, and may be running with options of its own (like --allow-lan) that a restart would drop.".to_string(),
+        _ => "Clidable couldn't tell whether any agents are in the middle of a task.".to_string(),
+    };
+    app.dialog()
+        .message(format!(
+            "An older version of Clidable ({running}) is still running, so you'd be using it instead of {ours}.\n\n{why}"
+        ))
+        .title("Clidable was updated")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            format!("Restart into {ours}"),
+            format!("Keep {running} for now"),
+        ))
+        .blocking_show()
+}
+
+/// The port is held by something that isn't Clidable. Say so plainly — the
+/// alternative is a window showing someone else's app, or a 404.
+#[cfg(not(debug_assertions))]
+fn report_foreign_port(app: &AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let port = server_port();
+    app.dialog()
+        .message(format!(
+            "Another program is using port {port}, so Clidable can't start.\n\nQuit that program, then open Clidable again. (Or run Clidable on another port by setting CLIDABLE_PORT.)"
+        ))
+        .title("Clidable can't start")
+        .kind(MessageDialogKind::Error)
+        .buttons(MessageDialogButtons::OkCustom("Quit".into()))
+        .blocking_show();
+}
+
+/// Make sure a server THIS app can use is running, and report what happened.
+///
+/// MUST run off the main thread: an older server may need the user's say-so
+/// through a blocking native dialog (`blocking_show` must not run on main).
+///
+/// The everyday launches cost what they always did — a TCP probe, plus one
+/// health request when something answers — and stay silent. Only when what
+/// answers is NOT a same-version Clidable does this ask the bundled sidecar for
+/// a plan (`__attach-plan`), so the rules for older / busy / not-ours / foreign
+/// live once, in tested TypeScript, and this side only dispatches. If the
+/// sidecar can't be asked, it attaches exactly as before — never worse than
+/// the old behaviour.
+fn ensure_server(app: &AppHandle) -> ServerOutcome {
+    // Mutated only by the release-only plan below; debug builds attach to the
+    // dev server `beforeDevCommand` started, so there's nothing to replace.
+    #[cfg_attr(debug_assertions, allow(unused_mut))]
+    let mut out = ServerOutcome {
+        was_up: server_up(),
+        replaced: false,
+        quit: false,
+    };
+    if !out.was_up {
+        spawn_sidecar(app);
+        return out;
+    }
+    // The everyday reopen: our own version is already running → just attach.
+    if running_clidable_version(server_port()).as_deref() == Some(env!("CARGO_PKG_VERSION")) {
+        return out;
+    }
+    #[cfg(not(debug_assertions))]
+    match attach_plan(app) {
+        // It went away between the probe and the plan.
+        Some(AttachPlan::Start) => spawn_sidecar(app),
+        // A NEWER server serves a newer UI anyway; or the sidecar couldn't be
+        // asked. Either way: attach, as every launch used to.
+        Some(AttachPlan::Attach) | None => {}
+        // Older, idle and app-owned: the user just installed this version and
+        // opened it — asking would be a question with one answer.
+        Some(AttachPlan::Replace) => out.replaced = replace_server(app),
+        Some(AttachPlan::Ask { running, reason, busy }) => {
+            if confirm_replace(app, &running, &reason, busy) {
+                out.replaced = replace_server(app);
+            }
+        }
+        Some(AttachPlan::Refuse) => {
+            report_foreign_port(app);
+            out.quit = true;
+            app.exit(1);
+        }
+    }
+    out
+}
+
+/// Quitting stops the server the app owns — closing a window only hides it, so
+/// Quit is the off-switch. Nothing else would stop it: the sidecar is spawned
+/// from Rust, and the shell plugin only kills children spawned from JavaScript.
+///
+/// The sidecar's `__app-quit` decides from the lockfile: a server the app
+/// started is stopped; one started from a terminal belongs to that terminal and
+/// keeps running. It signals the server and returns without waiting for it to
+/// wind down, so a quit waits only for the sidecar to start.
+#[cfg(not(debug_assertions))]
+fn stop_owned_server(app: &AppHandle) {
+    if server_up() {
+        let _ = sidecar_stdout(app, &["__app-quit"], Duration::from_secs(5));
+    }
 }
 
 /// Tint painted over the Windows Acrylic blur, as RGBA.
@@ -843,6 +1046,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             capture::capture_webview,
             open_workspace_window,
@@ -853,15 +1057,9 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Was a server already answering before we (maybe) spawned the sidecar?
-            // If so, the main window's declarative load succeeds and needs no
-            // re-navigation; if not, that first load races a not-yet-ready server.
-            let was_up = server_up();
             // BEFORE the sidecar spawns: it inherits this process's PATH, and so
             // does every terminal it later opens.
             adopt_login_shell_path();
-            // Own the background server for this app's lifetime.
-            ensure_server(&handle);
 
             // The main window is created hidden (tauri.conf `visible: false`) and
             // loads the server URL immediately. Wait for the server to answer, then
@@ -877,7 +1075,7 @@ pub fn run() {
                 // load raced a cold sidecar, OR the effective port differs from the
                 // one baked into the declarative URL (else a CLIDABLE_PORT override
                 // would leave the window pointed at the wrong, default port).
-                let need_nav = cwd_q.is_some() || !was_up || server_port() != DEFAULT_PORT;
+                let has_deep_link = cwd_q.is_some();
                 let target = match &cwd_q {
                     Some(q) => format!("{base}/?{q}"),
                     None => base.clone(),
@@ -885,13 +1083,30 @@ pub fn run() {
                 let url: tauri::Url = target
                     .parse()
                     .unwrap_or_else(|_| base.parse().expect("server url is valid"));
+                let server_app = handle.clone();
                 std::thread::spawn(move || {
+                    // Own the background server for this app's lifetime — decided
+                    // HERE, off the main thread, because an older server may need
+                    // a blocking dialog (which must not run on main). The window
+                    // is still hidden, so a replacement looks like a cold start.
+                    let outcome = ensure_server(&server_app);
+                    if outcome.quit {
+                        return; // the port isn't Clidable's; the app is exiting
+                    }
                     for _ in 0..50 {
                         if server_up() {
                             break;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(300));
                     }
+                    // Re-navigate when: a `--cwd` deep-link needs applying, the first
+                    // load raced a cold sidecar, the server was REPLACED (that first
+                    // load rendered the old version's frontend), or the effective
+                    // port differs from the one baked into the declarative URL.
+                    let need_nav = has_deep_link
+                        || !outcome.was_up
+                        || outcome.replaced
+                        || server_port() != DEFAULT_PORT;
                     if need_nav {
                         // Native navigate (not eval) so it works even if the initial
                         // hidden load errored on a not-yet-ready server.
@@ -903,10 +1118,17 @@ pub fn run() {
                     let _ = main.show();
                     let _ = main.set_focus();
                 });
+            } else {
+                // No main window to reveal — but the app still owns the server.
+                let server_app = handle.clone();
+                std::thread::spawn(move || {
+                    ensure_server(&server_app);
+                });
             }
 
             // Menu-bar / tray — the real off-switch. Show restores the main
-            // window; Quit exits the app (killing the sidecar server with it).
+            // window; Quit exits the app, and exiting stops the server it owns
+            // (stop_owned_server).
             let menu = MenuBuilder::new(app)
                 .text("show", "Show Clidable")
                 .text("install-cli", "Install `clidable` Command")
@@ -982,7 +1204,7 @@ pub fn run() {
             Ok(())
         })
         // Closing the MAIN window HIDES it (the app + its server keep running);
-        // only the tray's Quit stops everything. Secondary workspace windows
+        // only quitting stops everything. Secondary workspace windows
         // close/destroy normally — hiding them too would leak webviews and keep
         // their WebSockets open, pinning their PTYs so the reaper never collects
         // them. A destroyed window's PTYs enter the normal detach-grace instead.
@@ -1000,7 +1222,8 @@ pub fn run() {
         // clicking the Dock icon of a running-but-hidden app fires `Reopen`
         // (the app has no visible window because close only HID it) — bring the
         // main window back, matching the tray's Show. Without this the Dock icon
-        // is a dead click and the tray is the only way in.
+        // is a dead click and the tray is the only way in. `Exit` is where
+        // quitting stops the server.
         .run(|_handle, _event| {
             // Only surface main when the app has NO visible window (it was hidden
             // on close) — if a secondary workspace window is already up, a Dock
@@ -1012,6 +1235,13 @@ pub fn run() {
             } = _event
             {
                 focus_main(_handle);
+            }
+            // Every way of quitting ends here — the tray's Quit (`app.exit`), ⌘Q,
+            // the quit a `brew upgrade` sends (both `applicationWillTerminate`)
+            // — so this one hook covers them all.
+            #[cfg(not(debug_assertions))]
+            if let tauri::RunEvent::Exit = _event {
+                stop_owned_server(_handle);
             }
         });
 }
