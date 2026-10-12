@@ -1,6 +1,6 @@
 <div align="center">
 
-![Clidable — CLI coding agents for everyone](.github/social-preview.png)
+![Introducing Clidable: the coding agents it runs, above the Clidable workspace](.github/readme-hero.jpg)
 
 # Clidable
 
