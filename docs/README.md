@@ -6,6 +6,8 @@ The agents still run in their real terminals (their native TUI, full fidelity) �
 
 ## Install in 60 seconds
 
+**[Choose your installation: macOS, Windows / Linux, or your own server](./install.md).** The install page has copyable commands and secure remote-connection steps.
+
 **The desktop app** — the nicest way to use Clidable on your own machine:
 
 ```bash
@@ -43,6 +45,7 @@ Pick an agent on the welcome screen (Claude Code, Codex, Antigravity, …), open
 
 | Guide | What it covers |
 |---|---|
+| [Install Clidable](./install.md) | Choose your platform, download the app, or set up a server |
 | [Getting Started](./getting-started.md) | Install and run Clidable in 5 minutes, open your first project |
 | [Running Clidable](./running-clidable.md) | Every way to run it: desktop app, the `clidable` command, source, browser, phone |
 | [Remote & VPS Setup](./remote-vps.md) | Run Clidable on a server and use it from anywhere — Tailscale, Cloudflare Tunnel, reverse proxy. **Read the security section** |

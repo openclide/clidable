@@ -15,6 +15,7 @@
 import { Marked, type RendererObject, type Tokens } from "marked";
 import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+import { decorateInstall, installIcon, INSTALL_CSS } from "./docs-install";
 
 const ROOT = join(import.meta.dir, "..");
 const DOCS = join(ROOT, "docs");
@@ -26,6 +27,7 @@ const NAV: { section: string; pages: { file: string; label: string }[] }[] = [
     section: "Start here",
     pages: [
       { file: "README.md", label: "Overview" },
+      { file: "install.md", label: "Install Clidable" },
       { file: "getting-started.md", label: "Getting Started" },
     ],
   },
@@ -168,7 +170,8 @@ function sidebarHtml(activeFile: string): string {
   ).join("\n");
 }
 
-function pageHtml(page: RenderedPage, index: number, all: RenderedPage[]): string {
+export function pageHtml(page: RenderedPage, index: number, all: RenderedPage[]): string {
+  const isInstall = page.file === "install.html";
   const prev = all[index - 1];
   const next = all[index + 1];
   const tocHtml = page.toc.length
@@ -188,17 +191,18 @@ function pageHtml(page: RenderedPage, index: number, all: RenderedPage[]): strin
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
-<meta name="description" content="Clidable documentation — GUI for CLI coding agents." />
-<title>${escapeHtml(page.title)} · Clidable Docs</title>
+<meta name="description" content="${page.file === "install.html" ? "Install Clidable on macOS, Windows or Linux, or run it on your own server. Free, open-source workspace for CLI coding agents." : "Clidable documentation — GUI for CLI coding agents."}" />
+<title>${escapeHtml(page.title)}${isInstall ? "" : " · Clidable Docs"}</title>
 <link rel="icon" type="image/png" href="./logo.png" />
 <link rel="stylesheet" href="./docs.css" />
 </head>
-<body>
+<body${isInstall ? ' class="install-page"' : ""}>
+${isInstall ? `<a class="install-skip" href="#desktop">Skip to downloads</a>` : ""}
 <header class="top">
-  <a class="brand" href="./index.html"><img src="./logo.png" alt="" width="22" height="22" /><span>Clidable</span><span class="brand-docs">Docs</span></a>
-  <a class="gh" href="https://github.com/openclide/clidable" target="_blank" rel="noreferrer">GitHub ↗</a>
+  <a class="brand" href="./index.html"><img src="./logo.png" alt="" width="22" height="22" /><span>Clidable</span>${isInstall ? "" : '<span class="brand-docs">Docs</span>'}</a>
+  ${isInstall ? `<nav class="install-top-links" aria-label="Main navigation"><a href="./getting-started.html">Documentation</a><a href="https://github.com/openclide/clidable" target="_blank" rel="noreferrer">${installIcon("github")} GitHub</a></nav>` : '<a class="gh" href="https://github.com/openclide/clidable" target="_blank" rel="noreferrer">GitHub ↗</a>'}
 </header>
-<div class="shell">
+${isInstall ? `<main class="install-main"><article>${decorateInstall(page.body)}</article><footer class="install-footer"><span>Clidable. A better home for your agents.</span><a href="https://github.com/openclide/clidable/releases" target="_blank" rel="noreferrer">Release notes ↗</a></footer></main>` : `<div class="shell">
   <aside class="side">
     <details class="side-toggle"><summary>Menu — ${escapeHtml(page.label)}</summary>
       <nav class="nav" aria-label="Documentation">${sidebarHtml(page.file)}</nav>
@@ -211,16 +215,27 @@ function pageHtml(page: RenderedPage, index: number, all: RenderedPage[]): strin
     <footer class="foot">Clidable — GUI for CLI coding agents.</footer>
   </main>
   ${tocHtml}
-</div>
+</div>`}
 <script>
 for (const pre of document.querySelectorAll("pre")) {
   const btn = document.createElement("button");
   btn.className = "copy"; btn.type = "button"; btn.textContent = "Copy";
+  btn.setAttribute("aria-label", "Copy command");
+  btn.setAttribute("aria-live", "polite");
   btn.addEventListener("click", async () => {
     const code = pre.querySelector("code");
-    await navigator.clipboard.writeText(code ? code.innerText : pre.innerText);
-    btn.textContent = "Copied!";
-    setTimeout(() => (btn.textContent = "Copy"), 1200);
+    try {
+      await navigator.clipboard.writeText(code ? code.innerText : pre.innerText);
+      btn.textContent = "Copied!";
+      btn.setAttribute("aria-label", "Command copied");
+    } catch {
+      btn.textContent = "Select & copy";
+      btn.setAttribute("aria-label", "Clipboard unavailable. Select and copy the command manually.");
+    }
+    setTimeout(() => {
+      btn.textContent = "Copy";
+      btn.setAttribute("aria-label", "Copy command");
+    }, 2000);
   });
   pre.appendChild(btn);
 }
@@ -324,6 +339,8 @@ article li { margin: 4px 0; }
 article hr { border: 0; border-top: 1px solid var(--border); margin: 30px 0; }
 article img { max-width: 100%; }
 
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 4px; }
+
 article code {
   font: 12.8px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   background: var(--code-bg); border: 1px solid var(--border);
@@ -332,17 +349,15 @@ article code {
 article pre {
   position: relative; overflow-x: auto;
   background: rgba(0, 0, 0, 0.38); border: 1px solid var(--border);
-  border-radius: 12px; padding: 14px 16px; margin: 14px 0;
+  border-radius: 12px; padding: 44px 16px 14px; margin: 14px 0;
 }
 article pre code { background: none; border: 0; padding: 0; font-size: 13px; color: rgba(222, 226, 240, 0.92); }
 pre .copy {
   position: absolute; top: 8px; right: 8px;
   font: 11px system-ui, sans-serif; color: var(--muted);
   background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border);
-  border-radius: 7px; padding: 3px 9px; cursor: pointer; opacity: 0;
-  transition: opacity 0.15s;
+  border-radius: 7px; padding: 3px 9px; cursor: pointer;
 }
-pre:hover .copy { opacity: 1; }
 pre .copy:hover { color: var(--text); }
 
 article table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.5px; display: block; overflow-x: auto; }
@@ -388,10 +403,7 @@ article blockquote p { margin: 6px 0; }
 }
 `;
 
-function build(): void {
-  rmSync(OUT, { recursive: true, force: true });
-  mkdirSync(OUT, { recursive: true });
-
+export function renderDocumentation(): RenderedPage[] {
   const rendered: RenderedPage[] = [];
   for (const p of PAGES) {
     rendered.push(renderMarkdown(p.file, p.label, readFileSync(join(DOCS, p.file), "utf8")));
@@ -411,15 +423,19 @@ function build(): void {
     }
   }
   if (problems.length) {
-    console.error("Broken internal links:");
-    for (const p of problems) console.error("  ✗ " + p);
-    process.exit(1);
+    throw new Error("Broken internal links:\n" + problems.join("\n"));
   }
+  return rendered;
+}
 
-  rendered.forEach((page, i) => {
-    Bun.write(join(OUT, page.file), pageHtml(page, i, rendered));
-  });
-  Bun.write(join(OUT, "docs.css"), CSS.trim() + "\n");
+async function build(): Promise<void> {
+  // Validate first so a broken source link never wipes out a working preview.
+  const rendered = renderDocumentation();
+  rmSync(OUT, { recursive: true, force: true });
+  mkdirSync(OUT, { recursive: true });
+
+  await Promise.all(rendered.map((page, i) => Bun.write(join(OUT, page.file), pageHtml(page, i, rendered))));
+  await Bun.write(join(OUT, "docs.css"), CSS.trim() + "\n" + INSTALL_CSS.trim() + "\n");
   cpSync(join(ROOT, "logo.png"), join(OUT, "logo.png"));
 
   console.log(`[docs] built ${rendered.length} pages → ${OUT}`);
@@ -448,8 +464,10 @@ function serve(port: number): void {
   console.log(`[docs] preview at http://127.0.0.1:${port}`);
 }
 
-build();
-if (Bun.argv.includes("--serve")) {
-  const i = Bun.argv.indexOf("--port");
-  serve(i !== -1 ? Number(Bun.argv[i + 1]) : 8788);
+if (import.meta.main) {
+  await build();
+  if (Bun.argv.includes("--serve")) {
+    const i = Bun.argv.indexOf("--port");
+    serve(i !== -1 ? Number(Bun.argv[i + 1]) : 8788);
+  }
 }

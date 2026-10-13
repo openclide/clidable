@@ -2,6 +2,8 @@
 
 This guide takes you from zero to chatting with a coding agent in Clidable, in about 5 minutes.
 
+Only need the download or install command? Start with **[Install Clidable](./install.md)**, then come back here for the full walkthrough.
+
 ## 1. Install Clidable
 
 Pick **one** of these — they all end in the same UI.

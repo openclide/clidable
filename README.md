@@ -13,7 +13,7 @@ checkpoints, live preview, and one-click MCP / skills / plugins.
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Made with Bun](https://img.shields.io/badge/Bun-1.3-black?logo=bun)](https://bun.sh)
 
-[Documentation](docs/README.md) · [Remote & VPS](docs/remote-vps.md) · [Releases](https://github.com/openclide/clidable/releases)
+[Install Clidable](docs/install.md) · [Documentation](docs/README.md) · [Remote & VPS](docs/remote-vps.md) · [Releases](https://github.com/openclide/clidable/releases)
 
 </div>
 

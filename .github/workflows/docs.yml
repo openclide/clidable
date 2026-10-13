@@ -5,7 +5,7 @@ name: Docs
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "scripts/build-docs-site.ts", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "scripts/build-docs-site.ts", "scripts/docs-install.ts", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:
